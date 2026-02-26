@@ -229,6 +229,7 @@ impl RustParser {
                     method,
                     path,
                     path_params,
+                    is_feign_client: false,  // Rust 不使用 Feign
                 });
             }
         }

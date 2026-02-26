@@ -646,7 +646,7 @@ impl<'a> ImpactTracer<'a> {
     ) {
         use crate::types::HttpEndpoint;
         
-        // 如果当前方法是 HTTP 接口提供者
+        // 如果当前方法有 HTTP 注解
         if let Some(http_annotation) = &method_info.http_annotations {
             let endpoint = HttpEndpoint {
                 method: http_annotation.method.clone(),
@@ -664,34 +664,70 @@ impl<'a> ImpactTracer<'a> {
             // 方法节点 ID
             let method_id = format!("method:{}", method);
             
-            // 添加边：method -> endpoint (提供者)
-            graph.add_edge(
-                &endpoint_id,
-                &method_id,
-                EdgeType::HttpCall,
-                Direction::Downstream,
-            );
-            
-            // 查找所有调用该接口的消费者
-            let consumers = self.index.find_http_consumers(&endpoint);
-            for consumer in consumers {
-                if !visited.contains(consumer) {
-                    // 添加消费者节点
-                    let consumer_node = ImpactNode::method(consumer.to_string());
-                    let consumer_id = consumer_node.id.clone();
-                    graph.add_node(consumer_node);
-                    
-                    // 添加边：endpoint -> consumer
-                    graph.add_edge(
-                        &endpoint_id,
-                        &consumer_id,
-                        EdgeType::HttpCall,
-                        Direction::Downstream,
-                    );
-                    
-                    // 继续追溯消费者的下游
-                    let mut consumer_visited = visited.clone();
-                    self.trace_method_downstream(consumer, 0, &mut consumer_visited, graph);
+            // 根据 is_feign_client 标志判断是提供者还是消费者
+            if http_annotation.is_feign_client {
+                // Feign 调用：HTTP 节点是方法的下游
+                // 添加边：method -> endpoint (调用者 -> 被调用的HTTP接口)
+                graph.add_edge(
+                    &method_id,
+                    &endpoint_id,
+                    EdgeType::HttpCall,
+                    Direction::Downstream,
+                );
+                
+                // 查找提供该接口的方法（其他服务）
+                let providers = self.index.find_http_providers(&endpoint);
+                for provider in providers {
+                    if !visited.contains(provider) {
+                        // 添加提供者节点
+                        let provider_node = ImpactNode::method(provider.to_string());
+                        let provider_id = provider_node.id.clone();
+                        graph.add_node(provider_node);
+                        
+                        // 添加边：endpoint -> provider (HTTP接口 -> 提供者方法)
+                        graph.add_edge(
+                            &endpoint_id,
+                            &provider_id,
+                            EdgeType::HttpCall,
+                            Direction::Downstream,
+                        );
+                        
+                        // 继续追溯提供者的下游
+                        let mut provider_visited = visited.clone();
+                        self.trace_method_downstream(provider, 0, &mut provider_visited, graph);
+                    }
+                }
+            } else {
+                // HTTP 接口声明：HTTP 节点是方法的上游
+                // 添加边：endpoint -> method (HTTP接口 -> 提供者方法)
+                graph.add_edge(
+                    &endpoint_id,
+                    &method_id,
+                    EdgeType::HttpCall,
+                    Direction::Upstream,
+                );
+                
+                // 查找所有调用该接口的消费者（Feign 客户端）
+                let consumers = self.index.find_http_consumers(&endpoint);
+                for consumer in consumers {
+                    if !visited.contains(consumer) {
+                        // 添加消费者节点
+                        let consumer_node = ImpactNode::method(consumer.to_string());
+                        let consumer_id = consumer_node.id.clone();
+                        graph.add_node(consumer_node);
+                        
+                        // 添加边：consumer -> endpoint (消费者方法 -> HTTP接口)
+                        graph.add_edge(
+                            &consumer_id,
+                            &endpoint_id,
+                            EdgeType::HttpCall,
+                            Direction::Upstream,
+                        );
+                        
+                        // 继续追溯消费者的上游
+                        let mut consumer_visited = visited.clone();
+                        self.trace_method_upstream(consumer, 0, &mut consumer_visited, graph);
+                    }
                 }
             }
         }

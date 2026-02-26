@@ -408,6 +408,7 @@ impl JavaParser {
             method: method_http.method,
             path: full_path,
             path_params: method_http.path_params,
+            is_feign_client: true,  // Feign 调用
         })
     }
     
@@ -808,6 +809,7 @@ impl JavaParser {
             method,
             path: path_str,
             path_params,
+            is_feign_client: false,  // 普通 HTTP 接口声明
         })
     }
     

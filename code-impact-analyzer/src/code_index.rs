@@ -227,7 +227,7 @@ impl CodeIndex {
     }
     
     /// 索引方法信息
-    pub(crate) fn index_method(&mut self, method: &MethodInfo) -> Result<(), IndexError> {
+    pub fn index_method(&mut self, method: &MethodInfo) -> Result<(), IndexError> {
         let qualified_name = method.full_qualified_name.clone();
         
         // 存储方法信息
@@ -296,8 +296,17 @@ impl CodeIndex {
             path_pattern: annotation.path.clone(),
         };
         
-        // 记录 HTTP 提供者
-        self.http_providers.insert(endpoint, method_name.to_string());
+        // 根据 is_feign_client 标志判断是提供者还是消费者
+        if annotation.is_feign_client {
+            // Feign 消费者
+            self.http_consumers
+                .entry(endpoint)
+                .or_insert_with(Vec::new)
+                .push(method_name.to_string());
+        } else {
+            // HTTP 接口提供者
+            self.http_providers.insert(endpoint, method_name.to_string());
+        }
     }
     
     /// 索引 Kafka 操作
@@ -378,6 +387,14 @@ impl CodeIndex {
         self.method_calls
             .get(method)
             .map(|callees| callees.iter().map(|s| s.as_str()).collect())
+            .unwrap_or_default()
+    }
+    
+    /// 查找 HTTP 端点的提供者
+    pub fn find_http_providers(&self, endpoint: &HttpEndpoint) -> Vec<&str> {
+        self.http_providers
+            .get(endpoint)
+            .map(|provider| vec![provider.as_str()])
             .unwrap_or_default()
     }
     

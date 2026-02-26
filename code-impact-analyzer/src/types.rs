@@ -26,6 +26,8 @@ pub struct HttpAnnotation {
     pub method: HttpMethod,
     pub path: String,
     pub path_params: Vec<String>,
+    /// 是否是 Feign 客户端调用
+    pub is_feign_client: bool,
 }
 
 /// Kafka 操作类型

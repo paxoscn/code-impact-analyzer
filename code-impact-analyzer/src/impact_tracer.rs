@@ -666,8 +666,8 @@ impl<'a> ImpactTracer<'a> {
             
             // 添加边：method -> endpoint (提供者)
             graph.add_edge(
-                &method_id,
                 &endpoint_id,
+                &method_id,
                 EdgeType::HttpCall,
                 Direction::Downstream,
             );

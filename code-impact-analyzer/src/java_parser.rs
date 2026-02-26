@@ -39,9 +39,10 @@ impl JavaParser {
         classes
     }
     
-    /// 递归遍历节点查找类声明
+    /// 递归遍历节点查找类声明和接口声明
     fn walk_node_for_classes(&self, source: &str, file_path: &Path, node: tree_sitter::Node, classes: &mut Vec<ClassInfo>, tree: &tree_sitter::Tree) {
-        if node.kind() == "class_declaration" {
+        // 处理类声明和接口声明
+        if node.kind() == "class_declaration" || node.kind() == "interface_declaration" {
             if let Some(class_info) = self.extract_class_info(source, file_path, node, tree) {
                 classes.push(class_info);
             }
@@ -113,7 +114,7 @@ impl JavaParser {
         None
     }
     
-    /// 从类节点中提取方法
+    /// 从类节点中提取方法（包括接口中的抽象方法）
     fn extract_methods_from_class(
         &self,
         source: &str,
@@ -124,12 +125,13 @@ impl JavaParser {
     ) -> Vec<MethodInfo> {
         let mut methods = Vec::new();
         
-        // 查找类体
+        // 查找类体或接口体
         let mut cursor = class_node.walk();
         for child in class_node.children(&mut cursor) {
-            if child.kind() == "class_body" {
+            if child.kind() == "class_body" || child.kind() == "interface_body" {
                 let mut body_cursor = child.walk();
                 for body_child in child.children(&mut body_cursor) {
+                    // 处理普通方法声明和接口方法声明
                     if body_child.kind() == "method_declaration" {
                         if let Some(method_info) = self.extract_method_info(source, file_path, body_child, class_name, tree) {
                             methods.push(method_info);
@@ -680,6 +682,60 @@ mod tests {
         assert_eq!(result.classes[0].name, "Example");
         assert_eq!(result.classes[0].methods.len(), 1);
         assert_eq!(result.classes[0].methods[0].name, "hello");
+    }
+    
+    #[test]
+    fn test_parse_interface() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+            package com.example;
+            
+            public interface ShopCopyService {
+                Response query(GetShopCopyCmd cmd);
+                Response clone(ShopCloneCmd cmd);
+                Response restore(ShopRestoreCmd cmd);
+            }
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("ShopCopyService.java")).unwrap();
+        assert_eq!(result.classes.len(), 1);
+        assert_eq!(result.classes[0].name, "com.example.ShopCopyService");
+        assert_eq!(result.classes[0].methods.len(), 3);
+        assert_eq!(result.classes[0].methods[0].name, "query");
+        assert_eq!(result.classes[0].methods[1].name, "clone");
+        assert_eq!(result.classes[0].methods[2].name, "restore");
+    }
+    
+    #[test]
+    fn test_parse_interface_with_implementation() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+            package com.example;
+            
+            public interface UserService {
+                void saveUser(String name);
+            }
+            
+            public class UserServiceImpl implements UserService {
+                @Override
+                public void saveUser(String name) {
+                    // implementation
+                }
+            }
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("UserService.java")).unwrap();
+        assert_eq!(result.classes.len(), 2);
+        
+        // Check interface
+        assert_eq!(result.classes[0].name, "com.example.UserService");
+        assert_eq!(result.classes[0].methods.len(), 1);
+        assert_eq!(result.classes[0].methods[0].name, "saveUser");
+        
+        // Check implementation
+        assert_eq!(result.classes[1].name, "com.example.UserServiceImpl");
+        assert_eq!(result.classes[1].methods.len(), 1);
+        assert_eq!(result.classes[1].methods[0].name, "saveUser");
     }
     
     #[test]

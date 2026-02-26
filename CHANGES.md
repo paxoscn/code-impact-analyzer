@@ -1,6 +1,121 @@
 # 代码影响分析器 - 变更日志
 
-## [未发布] - 支持多 Patch 文件目录
+## [未发布] - 支持 Java 接口和抽象方法解析
+
+### 问题描述
+
+之前的 Java 解析器只能解析类声明（`class_declaration`），无法解析接口声明（`interface_declaration`），导致接口中的抽象方法没有被索引，影响了跨服务调用追溯的准确性。
+
+### 修复内容
+
+**文件**: `code-impact-analyzer/src/java_parser.rs`
+
+#### 1. 扩展类型识别
+
+修改 `walk_node_for_classes` 方法，同时支持类和接口：
+
+```rust
+// 修改前：只处理类声明
+if node.kind() == "class_declaration" {
+    // ...
+}
+
+// 修改后：同时处理类和接口声明
+if node.kind() == "class_declaration" || node.kind() == "interface_declaration" {
+    // ...
+}
+```
+
+#### 2. 扩展方法提取
+
+修改 `extract_methods_from_class` 方法，支持从接口体中提取方法：
+
+```rust
+// 修改前：只查找类体
+if child.kind() == "class_body" {
+    // ...
+}
+
+// 修改后：同时查找类体和接口体
+if child.kind() == "class_body" || child.kind() == "interface_body" {
+    // ...
+}
+```
+
+### 测试验证
+
+新增 2 个测试用例：
+
+1. **test_parse_interface**: 测试纯接口解析
+   - 验证接口名称正确提取
+   - 验证包名正确添加
+   - 验证所有抽象方法都被解析
+
+2. **test_parse_interface_with_implementation**: 测试接口和实现类同时解析
+   - 验证接口和实现类都被正确识别
+   - 验证方法在两者中都被正确提取
+
+### 实际测试结果
+
+使用真实的接口文件测试：
+
+**输入文件**: `ShopCopyService.java`
+```java
+package com.hll.basic.api.app.client.api;
+
+public interface ShopCopyService {
+    Response query(GetShopCopyCmd cmd);
+    Response clone(ShopCloneCmd cmd);
+    Response restore(ShopRestoreCmd cmd);
+    Response menu(ShopCopyMenuCmd cmd);
+    Response info(ShopCopyMenuCmd cmd);
+}
+```
+
+**解析结果**:
+```
+类/接口数量: 1
+类/接口名: com.hll.basic.api.app.client.api.ShopCopyService
+方法数量: 5
+  - 方法: query (行 16-16)
+    完整限定名: com.hll.basic.api.app.client.api.ShopCopyService::query
+  - 方法: clone (行 19-19)
+    完整限定名: com.hll.basic.api.app.client.api.ShopCopyService::clone
+  - 方法: restore (行 21-21)
+    完整限定名: com.hll.basic.api.app.client.api.ShopCopyService::restore
+  - 方法: menu (行 23-23)
+    完整限定名: com.hll.basic.api.app.client.api.ShopCopyService::menu
+  - 方法: info (行 25-25)
+    完整限定名: com.hll.basic.api.app.client.api.ShopCopyService::info
+```
+
+### 影响范围
+
+这个修复使得工具能够：
+
+1. **正确索引接口方法**: 接口中定义的抽象方法现在会被正确索引
+2. **追溯接口调用**: 当实现类调用接口方法时，能够正确建立调用关系
+3. **跨服务追溯**: 在微服务架构中，通过 Feign 客户端等方式调用接口时，能够正确追溯到接口定义
+4. **完整的影响分析**: 修改接口方法签名时，能够找到所有实现类和调用方
+
+### 适用场景
+
+特别适合以下 Java 开发模式：
+
+1. **面向接口编程**: Service 层定义接口，Impl 类实现
+2. **微服务架构**: 使用 Feign 客户端定义接口
+3. **API 定义**: 使用接口定义 REST API 契约
+4. **依赖注入**: Spring 等框架中通过接口注入依赖
+
+### 兼容性
+
+- 完全向后兼容，对类解析无影响
+- 不需要修改任何配置或命令行参数
+- 所有现有功能正常工作
+
+---
+
+## [之前] - 支持多 Patch 文件目录
 
 ### 新增功能
 

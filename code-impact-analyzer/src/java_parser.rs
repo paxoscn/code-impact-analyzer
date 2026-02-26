@@ -172,18 +172,27 @@ impl JavaParser {
     fn walk_node_for_calls(&self, source: &str, node: tree_sitter::Node, calls: &mut Vec<MethodCall>) {
         if node.kind() == "method_invocation" {
             // 查找方法名
+            // 对于 obj.method() 形式的调用，需要找到最后一个 identifier（方法名）
+            // 对于 method() 形式的调用，只有一个 identifier
             let mut cursor = node.walk();
+            let mut identifiers = Vec::new();
+            
             for child in node.children(&mut cursor) {
                 if child.kind() == "identifier" {
                     if let Some(text) = source.get(child.byte_range()) {
-                        let line = node.start_position().row + 1;
-                        calls.push(MethodCall {
-                            target: text.to_string(),
-                            line,
-                        });
-                        break;
+                        identifiers.push(text.to_string());
                     }
                 }
+            }
+            
+            // 取最后一个 identifier 作为方法名
+            if let Some(method_name) = identifiers.last() {
+                println!("xxx {:?}", identifiers);
+                let line = node.start_position().row + 1;
+                calls.push(MethodCall {
+                    target: method_name.clone(),
+                    line,
+                });
             }
         }
         
@@ -726,5 +735,74 @@ mod tests {
             .collect();
         assert!(call_names.contains(&"add"));
         assert!(call_names.contains(&"println"));
+    }
+    
+    #[test]
+    fn test_extract_field_access_method_calls() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+            public class TestController {
+                private EquipmentManageExe equipmentManageExe;
+                
+                public void testMethod() {
+                    equipmentManageExe.listExecuteSchedule("");
+                }
+            }
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("TestController.java")).unwrap();
+        assert_eq!(result.classes.len(), 1);
+        assert_eq!(result.classes[0].methods.len(), 1);
+        
+        let method = &result.classes[0].methods[0];
+        assert_eq!(method.calls.len(), 1);
+        assert_eq!(method.calls[0].target, "listExecuteSchedule");
+    }
+    
+    #[test]
+    fn test_extract_various_method_call_patterns() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+            public class TestService {
+                private UserService userService;
+                
+                public void testMethod() {
+                    // Direct method call
+                    localMethod();
+                    
+                    // Field access method call
+                    userService.findUser();
+                    
+                    // Chained method call
+                    userService.getRepository().save();
+                    
+                    // Static method call
+                    System.out.println("test");
+                    
+                    // Method call with multiple arguments
+                    userService.updateUser(1, "name");
+                }
+                
+                private void localMethod() {
+                }
+            }
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("TestService.java")).unwrap();
+        assert_eq!(result.classes.len(), 1);
+        assert_eq!(result.classes[0].methods.len(), 2);
+        
+        let test_method = &result.classes[0].methods[0];
+        let call_names: Vec<&str> = test_method.calls.iter()
+            .map(|c| c.target.as_str())
+            .collect();
+        
+        // Verify all method calls are captured correctly
+        assert!(call_names.contains(&"localMethod"), "Should find localMethod");
+        assert!(call_names.contains(&"findUser"), "Should find findUser");
+        assert!(call_names.contains(&"getRepository"), "Should find getRepository");
+        assert!(call_names.contains(&"save"), "Should find save");
+        assert!(call_names.contains(&"println"), "Should find println");
+        assert!(call_names.contains(&"updateUser"), "Should find updateUser");
     }
 }

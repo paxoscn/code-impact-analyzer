@@ -1,7 +1,9 @@
 use std::path::Path;
 use std::sync::Mutex;
+use std::fs;
 use tree_sitter::Parser;
 use regex::Regex;
+use serde_yaml::Value as YamlValue;
 use crate::errors::ParseError;
 use crate::language_parser::{LanguageParser, ParsedFile, ClassInfo, MethodInfo, MethodCall};
 use crate::types::*;
@@ -13,6 +15,15 @@ struct FeignClientInfo {
     service_name: String,
     /// 基础路径（path 属性）
     base_path: Option<String>,
+}
+
+/// 应用配置信息
+#[derive(Debug, Clone, Default)]
+struct ApplicationConfig {
+    /// 应用名称（从 spring.application.name 读取）
+    application_name: Option<String>,
+    /// 上下文路径（从 server.servlet.context-path 读取）
+    context_path: Option<String>,
 }
 
 /// Java 语言解析器
@@ -38,33 +49,143 @@ impl JavaParser {
         })
     }
     
+    /// 从项目根目录查找并解析 application.yml 配置文件
+    /// 
+    /// 查找路径：start/src/main/resources/application.yml
+    fn load_application_config(&self, file_path: &Path) -> ApplicationConfig {
+        // 尝试找到项目根目录
+        let mut current = file_path;
+        let mut project_root = None;
+        
+        // 向上查找，直到找到包含 start 目录的项目根目录
+        while let Some(parent) = current.parent() {
+            let start_dir = parent.join("start");
+            if start_dir.exists() && start_dir.is_dir() {
+                project_root = Some(parent);
+                break;
+            }
+            current = parent;
+        }
+        
+        // 如果没找到 start 目录，尝试从当前文件路径推断
+        if project_root.is_none() {
+            current = file_path;
+            while let Some(parent) = current.parent() {
+                // 检查是否在某个模块目录下（如 hll-shop-manager-adapter）
+                if let Some(name) = parent.file_name() {
+                    let name_str = name.to_string_lossy();
+                    // 如果是模块目录，其父目录可能是项目根目录
+                    if name_str.contains("-adapter") || name_str.contains("-app") 
+                        || name_str.contains("-client") || name_str.contains("-domain")
+                        || name_str.contains("-infrastructure") {
+                        if let Some(potential_root) = parent.parent() {
+                            let start_dir = potential_root.join("start");
+                            if start_dir.exists() && start_dir.is_dir() {
+                                project_root = Some(potential_root);
+                                break;
+                            }
+                        }
+                    }
+                }
+                current = parent;
+            }
+        }
+        
+        let project_root = match project_root {
+            Some(root) => root,
+            None => return ApplicationConfig::default(),
+        };
+        
+        // 构建 application.yml 的路径
+        let config_path = project_root
+            .join("start")
+            .join("src")
+            .join("main")
+            .join("resources")
+            .join("application.yml");
+        
+        // 读取并解析配置文件
+        if let Ok(content) = fs::read_to_string(&config_path) {
+            self.parse_application_yml(&content, project_root)
+        } else {
+            ApplicationConfig::default()
+        }
+    }
+    
+    /// 解析 application.yml 文件内容
+    fn parse_application_yml(&self, content: &str, project_root: &Path) -> ApplicationConfig {
+        let mut config = ApplicationConfig::default();
+        
+        // 解析 YAML
+        if let Ok(yaml) = serde_yaml::from_str::<YamlValue>(content) {
+            // 提取 spring.application.name
+            if let Some(spring) = yaml.get("spring") {
+                if let Some(application) = spring.get("application") {
+                    if let Some(name) = application.get("name") {
+                        if let Some(name_str) = name.as_str() {
+                            config.application_name = Some(name_str.to_string());
+                        }
+                    }
+                }
+            }
+            
+            // 提取 server.servlet.context-path
+            if let Some(server) = yaml.get("server") {
+                if let Some(servlet) = server.get("servlet") {
+                    if let Some(context_path) = servlet.get("context-path") {
+                        if let Some(path_str) = context_path.as_str() {
+                            config.context_path = Some(path_str.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 如果没有找到 application.name，使用项目目录名
+        if config.application_name.is_none() {
+            if let Some(dir_name) = project_root.file_name() {
+                config.application_name = Some(dir_name.to_string_lossy().to_string());
+            }
+        }
+        
+        // 如果没有找到 context-path，使用空字符串
+        if config.context_path.is_none() {
+            config.context_path = Some(String::new());
+        }
+        
+        config
+    }
+    
     /// 提取类信息
     fn extract_classes(&self, source: &str, file_path: &Path, tree: &tree_sitter::Tree) -> Vec<ClassInfo> {
         let mut classes = Vec::new();
         let root_node = tree.root_node();
         
-        self.walk_node_for_classes(source, file_path, root_node, &mut classes, tree);
+        // 加载应用配置
+        let app_config = self.load_application_config(file_path);
+        
+        self.walk_node_for_classes(source, file_path, root_node, &mut classes, tree, &app_config);
         
         classes
     }
     
     /// 递归遍历节点查找类声明和接口声明
-    fn walk_node_for_classes(&self, source: &str, file_path: &Path, node: tree_sitter::Node, classes: &mut Vec<ClassInfo>, tree: &tree_sitter::Tree) {
+    fn walk_node_for_classes(&self, source: &str, file_path: &Path, node: tree_sitter::Node, classes: &mut Vec<ClassInfo>, tree: &tree_sitter::Tree, app_config: &ApplicationConfig) {
         // 处理类声明和接口声明
         if node.kind() == "class_declaration" || node.kind() == "interface_declaration" {
-            if let Some(class_info) = self.extract_class_info(source, file_path, node, tree) {
+            if let Some(class_info) = self.extract_class_info(source, file_path, node, tree, app_config) {
                 classes.push(class_info);
             }
         }
         
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            self.walk_node_for_classes(source, file_path, child, classes, tree);
+            self.walk_node_for_classes(source, file_path, child, classes, tree, app_config);
         }
     }
     
     /// 从类节点提取类信息
-    fn extract_class_info(&self, source: &str, file_path: &Path, class_node: tree_sitter::Node, tree: &tree_sitter::Tree) -> Option<ClassInfo> {
+    fn extract_class_info(&self, source: &str, file_path: &Path, class_node: tree_sitter::Node, tree: &tree_sitter::Tree, app_config: &ApplicationConfig) -> Option<ClassInfo> {
         // 查找类名
         let mut cursor = class_node.walk();
         let mut class_name = None;
@@ -94,8 +215,11 @@ impl JavaParser {
         // 提取类级别的 FeignClient 注解
         let feign_client_info = self.extract_feign_client_annotation(source, &class_node);
         
+        // 提取类级别的 RequestMapping 注解
+        let class_request_mapping = self.extract_class_level_request_mapping(source, &class_node);
+        
         // 提取类中的方法
-        let methods = self.extract_methods_from_class(source, file_path, &class_node, &full_class_name, tree, &feign_client_info);
+        let methods = self.extract_methods_from_class(source, file_path, &class_node, &full_class_name, tree, &feign_client_info, &class_request_mapping, app_config);
         
         Some(ClassInfo {
             name: full_class_name,
@@ -145,6 +269,57 @@ impl JavaParser {
         }
         
         None
+    }
+    
+    /// 提取类级别的 RequestMapping 注解
+    fn extract_class_level_request_mapping(&self, source: &str, class_node: &tree_sitter::Node) -> Option<String> {
+        // 查找类节点的 modifiers 子节点
+        let mut cursor = class_node.walk();
+        for child in class_node.children(&mut cursor) {
+            if child.kind() == "modifiers" {
+                // 在 modifiers 中查找注解
+                let mut mod_cursor = child.walk();
+                for mod_child in child.children(&mut mod_cursor) {
+                    if mod_child.kind() == "marker_annotation" || mod_child.kind() == "annotation" {
+                        if let Some(path) = self.parse_request_mapping_annotation(source, mod_child) {
+                            return Some(path);
+                        }
+                    }
+                }
+            }
+        }
+        
+        None
+    }
+    
+    /// 解析 RequestMapping 注解获取路径
+    fn parse_request_mapping_annotation(&self, source: &str, annotation_node: tree_sitter::Node) -> Option<String> {
+        // 获取注解名称
+        let mut cursor = annotation_node.walk();
+        let mut annotation_name = None;
+        let mut annotation_args = None;
+        
+        for child in annotation_node.children(&mut cursor) {
+            if child.kind() == "identifier" || child.kind() == "scoped_identifier" {
+                if let Some(text) = source.get(child.byte_range()) {
+                    annotation_name = Some(text.to_string());
+                }
+            } else if child.kind() == "annotation_argument_list" {
+                if let Some(text) = source.get(child.byte_range()) {
+                    annotation_args = Some(text.to_string());
+                }
+            }
+        }
+        
+        let name = annotation_name?;
+        
+        // 检查是否是 RequestMapping 注解
+        if !name.contains("RequestMapping") {
+            return None;
+        }
+        
+        // 提取路径
+        self.extract_path_from_args(&annotation_args)
     }
     
     /// 解析 FeignClient 注解
@@ -208,8 +383,8 @@ impl JavaParser {
         method_node: &tree_sitter::Node,
         feign_info: &FeignClientInfo,
     ) -> Option<HttpAnnotation> {
-        // 提取方法级别的 HTTP 注解
-        let method_http = self.extract_http_annotations(source, method_node)?;
+        // 提取方法级别的 HTTP 注解（不使用应用配置，因为这是调用其他服务）
+        let method_http = self.extract_http_annotations_raw(source, method_node)?;
         
         // 组合路径：service_name/base_path/method_path
         let mut full_path = feign_info.service_name.clone();
@@ -245,6 +420,8 @@ impl JavaParser {
         class_name: &str,
         tree: &tree_sitter::Tree,
         feign_client_info: &Option<FeignClientInfo>,
+        class_request_mapping: &Option<String>,
+        app_config: &ApplicationConfig,
     ) -> Vec<MethodInfo> {
         let mut methods = Vec::new();
         
@@ -256,7 +433,7 @@ impl JavaParser {
                 for body_child in child.children(&mut body_cursor) {
                     // 处理普通方法声明和接口方法声明
                     if body_child.kind() == "method_declaration" {
-                        if let Some(method_info) = self.extract_method_info(source, file_path, body_child, class_name, tree, feign_client_info) {
+                        if let Some(method_info) = self.extract_method_info(source, file_path, body_child, class_name, tree, feign_client_info, class_request_mapping, app_config) {
                             methods.push(method_info);
                         }
                     }
@@ -276,6 +453,8 @@ impl JavaParser {
         class_name: &str,
         tree: &tree_sitter::Tree,
         feign_client_info: &Option<FeignClientInfo>,
+        class_request_mapping: &Option<String>,
+        app_config: &ApplicationConfig,
     ) -> Option<MethodInfo> {
         // 查找方法名
         let mut cursor = method_node.walk();
@@ -302,7 +481,7 @@ impl JavaParser {
         let http_annotations = if let Some(feign_info) = feign_client_info {
             self.extract_feign_http_annotation(source, &method_node, feign_info)
         } else {
-            self.extract_http_annotations(source, &method_node)
+            self.extract_http_annotations(source, &method_node, class_request_mapping, app_config)
         };
         
         // 提取 Kafka 操作
@@ -506,7 +685,63 @@ impl JavaParser {
     }
     
     /// 提取 HTTP 注解（Spring Framework）
-    fn extract_http_annotations(&self, source: &str, method_node: &tree_sitter::Node) -> Option<HttpAnnotation> {
+    fn extract_http_annotations(&self, source: &str, method_node: &tree_sitter::Node, class_request_mapping: &Option<String>, app_config: &ApplicationConfig) -> Option<HttpAnnotation> {
+        // 查找方法节点的 modifiers 子节点
+        let mut cursor = method_node.walk();
+        for child in method_node.children(&mut cursor) {
+            if child.kind() == "modifiers" {
+                // 在 modifiers 中查找注解
+                let mut mod_cursor = child.walk();
+                for mod_child in child.children(&mut mod_cursor) {
+                    if mod_child.kind() == "marker_annotation" || mod_child.kind() == "annotation" {
+                        if let Some(mut http_ann) = self.parse_http_annotation(source, mod_child) {
+                            // 组合完整路径：application.name/context-path/class-path/method-path
+                            let mut full_path = String::new();
+                            
+                            // 添加 application.name
+                            if let Some(app_name) = &app_config.application_name {
+                                full_path.push_str(app_name);
+                            }
+                            
+                            // 添加 context-path
+                            if let Some(context_path) = &app_config.context_path {
+                                if !context_path.is_empty() {
+                                    if !full_path.is_empty() && !full_path.ends_with('/') {
+                                        full_path.push('/');
+                                    }
+                                    full_path.push_str(context_path.trim_start_matches('/'));
+                                }
+                            }
+                            
+                            // 添加类级别的 RequestMapping 路径
+                            if let Some(class_path) = class_request_mapping {
+                                if !full_path.is_empty() && !full_path.ends_with('/') {
+                                    full_path.push('/');
+                                }
+                                full_path.push_str(class_path.trim_start_matches('/'));
+                            }
+                            
+                            // 添加方法级别的路径
+                            let method_path = http_ann.path.trim_start_matches('/');
+                            if !full_path.is_empty() && !full_path.ends_with('/') && !method_path.is_empty() {
+                                full_path.push('/');
+                            }
+                            full_path.push_str(method_path);
+                            
+                            http_ann.path = full_path;
+                            return Some(http_ann);
+                        }
+                    }
+                }
+            }
+        }
+        
+        None
+    }
+    
+    /// 提取 HTTP 注解（原始版本，不包含应用配置）
+    /// 用于 FeignClient 等场景
+    fn extract_http_annotations_raw(&self, source: &str, method_node: &tree_sitter::Node) -> Option<HttpAnnotation> {
         // 查找方法节点的 modifiers 子节点
         let mut cursor = method_node.walk();
         for child in method_node.children(&mut cursor) {

@@ -277,6 +277,7 @@ impl CodeIndex {
         let method_info = MethodInfo {
             name: function.name.clone(),
             full_qualified_name: function.full_qualified_name.clone(),
+            file_path: function.file_path.clone(),
             line_range: function.line_range,
             calls: function.calls.clone(),
             http_annotations: function.http_annotations.clone(),

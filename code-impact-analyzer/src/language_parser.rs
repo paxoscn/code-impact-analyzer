@@ -39,6 +39,7 @@ pub struct ClassInfo {
 pub struct MethodInfo {
     pub name: String,
     pub full_qualified_name: String,
+    pub file_path: PathBuf,
     pub line_range: (usize, usize),
     pub calls: Vec<MethodCall>,
     pub http_annotations: Option<HttpAnnotation>,
@@ -52,6 +53,7 @@ pub struct MethodInfo {
 pub struct FunctionInfo {
     pub name: String,
     pub full_qualified_name: String,
+    pub file_path: PathBuf,
     pub line_range: (usize, usize),
     pub calls: Vec<MethodCall>,
     pub http_annotations: Option<HttpAnnotation>,

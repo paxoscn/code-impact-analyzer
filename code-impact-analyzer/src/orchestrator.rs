@@ -466,8 +466,14 @@ impl AnalysisOrchestrator {
             }
             
             // 查找这些行范围内的方法
-            // 这里简化处理：遍历索引中的所有方法，检查是否在变更范围内
+            // 遍历索引中的所有方法，检查是否属于当前文件且在变更范围内
             for (method_name, method_info) in code_index.methods() {
+                // 首先检查方法是否属于当前文件
+                // 通过比较 file_path 来判断
+                if method_info.file_path != file_path {
+                    continue;
+                }
+                
                 // 检查方法的行范围是否与变更范围重叠
                 let method_start = method_info.line_range.0;
                 let method_end = method_info.line_range.1;
@@ -476,7 +482,7 @@ impl AnalysisOrchestrator {
                     // 检查是否有重叠
                     if method_start <= *change_end && method_end >= *change_start {
                         changed_methods.push(method_name.clone());
-                        log::debug!("Found changed method: {}", method_name);
+                        log::debug!("Found changed method: {} in file {:?}", method_name, file_path);
                         break;
                     }
                 }

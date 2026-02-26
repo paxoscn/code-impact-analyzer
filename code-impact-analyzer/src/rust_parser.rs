@@ -30,11 +30,11 @@ impl RustParser {
     }
     
     /// 提取函数信息
-    fn extract_functions(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<FunctionInfo> {
+    fn extract_functions(&self, source: &str, file_path: &Path, tree: &tree_sitter::Tree) -> Vec<FunctionInfo> {
         let mut functions = Vec::new();
         let root_node = tree.root_node();
         
-        self.walk_node_for_functions(source, root_node, &mut functions, None);
+        self.walk_node_for_functions(source, file_path, root_node, &mut functions, None);
         
         functions
     }
@@ -43,12 +43,13 @@ impl RustParser {
     fn walk_node_for_functions(
         &self,
         source: &str,
+        file_path: &Path,
         node: tree_sitter::Node,
         functions: &mut Vec<FunctionInfo>,
         module_path: Option<&str>,
     ) {
         if node.kind() == "function_item" {
-            if let Some(func_info) = self.extract_function_info(source, node, module_path) {
+            if let Some(func_info) = self.extract_function_info(source, file_path, node, module_path) {
                 functions.push(func_info);
             }
         } else if node.kind() == "mod_item" {
@@ -66,7 +67,7 @@ impl RustParser {
                     if child.kind() == "declaration_list" {
                         let mut body_cursor = child.walk();
                         for body_child in child.children(&mut body_cursor) {
-                            self.walk_node_for_functions(source, body_child, functions, Some(&new_path));
+                            self.walk_node_for_functions(source, file_path, body_child, functions, Some(&new_path));
                         }
                     }
                 }
@@ -77,7 +78,7 @@ impl RustParser {
         
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            self.walk_node_for_functions(source, child, functions, module_path);
+            self.walk_node_for_functions(source, file_path, child, functions, module_path);
         }
     }
     
@@ -98,6 +99,7 @@ impl RustParser {
     fn extract_function_info(
         &self,
         source: &str,
+        file_path: &Path,
         func_node: tree_sitter::Node,
         module_path: Option<&str>,
     ) -> Option<FunctionInfo> {
@@ -142,6 +144,7 @@ impl RustParser {
         Some(FunctionInfo {
             name,
             full_qualified_name,
+            file_path: file_path.to_path_buf(),
             line_range: (line_start, line_end),
             calls,
             http_annotations,
@@ -423,7 +426,7 @@ impl LanguageParser for RustParser {
                 message: "Failed to parse Rust file".to_string(),
             })?;
         
-        let functions = self.extract_functions(content, &tree);
+        let functions = self.extract_functions(content, file_path, &tree);
         let imports = self.extract_imports(content, &tree);
         
         Ok(ParsedFile {

@@ -30,31 +30,31 @@ impl JavaParser {
     }
     
     /// 提取类信息
-    fn extract_classes(&self, source: &str, tree: &tree_sitter::Tree) -> Vec<ClassInfo> {
+    fn extract_classes(&self, source: &str, file_path: &Path, tree: &tree_sitter::Tree) -> Vec<ClassInfo> {
         let mut classes = Vec::new();
         let root_node = tree.root_node();
         
-        self.walk_node_for_classes(source, root_node, &mut classes, tree);
+        self.walk_node_for_classes(source, file_path, root_node, &mut classes, tree);
         
         classes
     }
     
     /// 递归遍历节点查找类声明
-    fn walk_node_for_classes(&self, source: &str, node: tree_sitter::Node, classes: &mut Vec<ClassInfo>, tree: &tree_sitter::Tree) {
+    fn walk_node_for_classes(&self, source: &str, file_path: &Path, node: tree_sitter::Node, classes: &mut Vec<ClassInfo>, tree: &tree_sitter::Tree) {
         if node.kind() == "class_declaration" {
-            if let Some(class_info) = self.extract_class_info(source, node, tree) {
+            if let Some(class_info) = self.extract_class_info(source, file_path, node, tree) {
                 classes.push(class_info);
             }
         }
         
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            self.walk_node_for_classes(source, child, classes, tree);
+            self.walk_node_for_classes(source, file_path, child, classes, tree);
         }
     }
     
     /// 从类节点提取类信息
-    fn extract_class_info(&self, source: &str, class_node: tree_sitter::Node, tree: &tree_sitter::Tree) -> Option<ClassInfo> {
+    fn extract_class_info(&self, source: &str, file_path: &Path, class_node: tree_sitter::Node, tree: &tree_sitter::Tree) -> Option<ClassInfo> {
         // 查找类名
         let mut cursor = class_node.walk();
         let mut class_name = None;
@@ -82,7 +82,7 @@ impl JavaParser {
         let line_end = class_node.end_position().row + 1;
         
         // 提取类中的方法
-        let methods = self.extract_methods_from_class(source, &class_node, &full_class_name, tree);
+        let methods = self.extract_methods_from_class(source, file_path, &class_node, &full_class_name, tree);
         
         Some(ClassInfo {
             name: full_class_name,
@@ -117,6 +117,7 @@ impl JavaParser {
     fn extract_methods_from_class(
         &self,
         source: &str,
+        file_path: &Path,
         class_node: &tree_sitter::Node,
         class_name: &str,
         tree: &tree_sitter::Tree,
@@ -130,7 +131,7 @@ impl JavaParser {
                 let mut body_cursor = child.walk();
                 for body_child in child.children(&mut body_cursor) {
                     if body_child.kind() == "method_declaration" {
-                        if let Some(method_info) = self.extract_method_info(source, body_child, class_name, tree) {
+                        if let Some(method_info) = self.extract_method_info(source, file_path, body_child, class_name, tree) {
                             methods.push(method_info);
                         }
                     }
@@ -145,6 +146,7 @@ impl JavaParser {
     fn extract_method_info(
         &self,
         source: &str,
+        file_path: &Path,
         method_node: tree_sitter::Node,
         class_name: &str,
         tree: &tree_sitter::Tree,
@@ -185,6 +187,7 @@ impl JavaParser {
         Some(MethodInfo {
             name,
             full_qualified_name,
+            file_path: file_path.to_path_buf(),
             line_range: (line_start, line_end),
             calls,
             http_annotations,
@@ -644,7 +647,7 @@ impl LanguageParser for JavaParser {
                 message: "Failed to parse Java file".to_string(),
             })?;
         
-        let classes = self.extract_classes(content, &tree);
+        let classes = self.extract_classes(content, file_path, &tree);
         let imports = self.extract_imports(content, &tree);
         
         Ok(ParsedFile {

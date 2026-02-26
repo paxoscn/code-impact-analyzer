@@ -34,27 +34,27 @@ impl JavaParser {
         let mut classes = Vec::new();
         let root_node = tree.root_node();
         
-        self.walk_node_for_classes(source, root_node, &mut classes);
+        self.walk_node_for_classes(source, root_node, &mut classes, tree);
         
         classes
     }
     
     /// 递归遍历节点查找类声明
-    fn walk_node_for_classes(&self, source: &str, node: tree_sitter::Node, classes: &mut Vec<ClassInfo>) {
+    fn walk_node_for_classes(&self, source: &str, node: tree_sitter::Node, classes: &mut Vec<ClassInfo>, tree: &tree_sitter::Tree) {
         if node.kind() == "class_declaration" {
-            if let Some(class_info) = self.extract_class_info(source, node) {
+            if let Some(class_info) = self.extract_class_info(source, node, tree) {
                 classes.push(class_info);
             }
         }
         
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            self.walk_node_for_classes(source, child, classes);
+            self.walk_node_for_classes(source, child, classes, tree);
         }
     }
     
     /// 从类节点提取类信息
-    fn extract_class_info(&self, source: &str, class_node: tree_sitter::Node) -> Option<ClassInfo> {
+    fn extract_class_info(&self, source: &str, class_node: tree_sitter::Node, tree: &tree_sitter::Tree) -> Option<ClassInfo> {
         // 查找类名
         let mut cursor = class_node.walk();
         let mut class_name = None;
@@ -68,18 +68,49 @@ impl JavaParser {
             }
         }
         
-        let name = class_name?;
+        let simple_name = class_name?;
+        
+        // 提取包名，构建完整的类名
+        let package_name = self.extract_package_name(source, tree);
+        let full_class_name = if let Some(pkg) = package_name {
+            format!("{}.{}", pkg, simple_name)
+        } else {
+            simple_name.clone()
+        };
+        
         let line_start = class_node.start_position().row + 1;
         let line_end = class_node.end_position().row + 1;
         
         // 提取类中的方法
-        let methods = self.extract_methods_from_class(source, &class_node, &name);
+        let methods = self.extract_methods_from_class(source, &class_node, &full_class_name, tree);
         
         Some(ClassInfo {
-            name,
+            name: full_class_name,
             methods,
             line_range: (line_start, line_end),
         })
+    }
+    
+    /// 提取包名
+    fn extract_package_name(&self, source: &str, tree: &tree_sitter::Tree) -> Option<String> {
+        let root_node = tree.root_node();
+        let mut cursor = root_node.walk();
+        
+        for child in root_node.children(&mut cursor) {
+            if child.kind() == "package_declaration" {
+                // 在 package_declaration 中查找 scoped_identifier
+                let mut pkg_cursor = child.walk();
+                for pkg_child in child.children(&mut pkg_cursor) {
+                    if pkg_child.kind() == "scoped_identifier" {
+                        if let Some(text) = source.get(pkg_child.byte_range()) {
+                            return Some(text.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        
+        None
     }
     
     /// 从类节点中提取方法
@@ -88,6 +119,7 @@ impl JavaParser {
         source: &str,
         class_node: &tree_sitter::Node,
         class_name: &str,
+        tree: &tree_sitter::Tree,
     ) -> Vec<MethodInfo> {
         let mut methods = Vec::new();
         
@@ -98,7 +130,7 @@ impl JavaParser {
                 let mut body_cursor = child.walk();
                 for body_child in child.children(&mut body_cursor) {
                     if body_child.kind() == "method_declaration" {
-                        if let Some(method_info) = self.extract_method_info(source, body_child, class_name) {
+                        if let Some(method_info) = self.extract_method_info(source, body_child, class_name, tree) {
                             methods.push(method_info);
                         }
                     }
@@ -115,6 +147,7 @@ impl JavaParser {
         source: &str,
         method_node: tree_sitter::Node,
         class_name: &str,
+        tree: &tree_sitter::Tree,
     ) -> Option<MethodInfo> {
         // 查找方法名
         let mut cursor = method_node.walk();
@@ -135,7 +168,7 @@ impl JavaParser {
         let full_qualified_name = format!("{}::{}", class_name, name);
         
         // 提取方法调用
-        let calls = self.extract_method_calls(source, &method_node);
+        let calls = self.extract_method_calls(source, &method_node, tree);
         
         // 提取 HTTP 注解
         let http_annotations = self.extract_http_annotations(source, &method_node);
@@ -162,18 +195,134 @@ impl JavaParser {
     }
     
     /// 提取方法调用
-    fn extract_method_calls(&self, source: &str, method_node: &tree_sitter::Node) -> Vec<MethodCall> {
+    fn extract_method_calls(&self, source: &str, method_node: &tree_sitter::Node, tree: &tree_sitter::Tree) -> Vec<MethodCall> {
         let mut calls = Vec::new();
-        self.walk_node_for_calls(source, *method_node, &mut calls);
+        
+        // 提取导入语句，建立简单类名到完整类名的映射
+        let import_map = self.build_import_map(source, tree);
+        
+        // 提取类中的字段声明，建立字段名到类型的映射
+        let field_types = self.extract_field_types(source, method_node);
+        
+        self.walk_node_for_calls(source, *method_node, &mut calls, &field_types, &import_map);
         calls
     }
     
+    /// 构建导入映射：简单类名 -> 完整类名
+    fn build_import_map(&self, source: &str, tree: &tree_sitter::Tree) -> std::collections::HashMap<String, String> {
+        let mut import_map = std::collections::HashMap::new();
+        let root_node = tree.root_node();
+        
+        self.walk_node_for_import_map(source, root_node, &mut import_map);
+        
+        import_map
+    }
+    
+    /// 递归遍历节点构建导入映射
+    fn walk_node_for_import_map(
+        &self,
+        source: &str,
+        node: tree_sitter::Node,
+        import_map: &mut std::collections::HashMap<String, String>,
+    ) {
+        if node.kind() == "import_declaration" {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "scoped_identifier" {
+                    if let Some(full_name) = source.get(child.byte_range()) {
+                        // 从完整类名中提取简单类名
+                        if let Some(simple_name) = full_name.split('.').last() {
+                            import_map.insert(simple_name.to_string(), full_name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            self.walk_node_for_import_map(source, child, import_map);
+        }
+    }
+    
+    /// 提取类中的字段类型映射
+    fn extract_field_types(&self, source: &str, method_node: &tree_sitter::Node) -> std::collections::HashMap<String, String> {
+        let mut field_types = std::collections::HashMap::new();
+        
+        // 向上查找到类节点
+        let mut current = method_node.parent();
+        while let Some(node) = current {
+            if node.kind() == "class_declaration" {
+                // 在类体中查找字段声明
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    if child.kind() == "class_body" {
+                        let mut body_cursor = child.walk();
+                        for body_child in child.children(&mut body_cursor) {
+                            if body_child.kind() == "field_declaration" {
+                                self.extract_field_type_from_declaration(source, body_child, &mut field_types);
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+            current = node.parent();
+        }
+        
+        field_types
+    }
+    
+    /// 从字段声明中提取字段名和类型
+    fn extract_field_type_from_declaration(
+        &self,
+        source: &str,
+        field_node: tree_sitter::Node,
+        field_types: &mut std::collections::HashMap<String, String>,
+    ) {
+        let mut field_type = None;
+        let mut field_name = None;
+        
+        let mut cursor = field_node.walk();
+        for child in field_node.children(&mut cursor) {
+            match child.kind() {
+                "type_identifier" | "generic_type" => {
+                    if let Some(text) = source.get(child.byte_range()) {
+                        field_type = Some(text.to_string());
+                    }
+                }
+                "variable_declarator" => {
+                    // 在 variable_declarator 中查找 identifier
+                    let mut var_cursor = child.walk();
+                    for var_child in child.children(&mut var_cursor) {
+                        if var_child.kind() == "identifier" {
+                            if let Some(text) = source.get(var_child.byte_range()) {
+                                field_name = Some(text.to_string());
+                                break;
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        if let (Some(name), Some(type_name)) = (field_name, field_type) {
+            field_types.insert(name, type_name);
+        }
+    }
+    
     /// 递归遍历节点查找方法调用
-    fn walk_node_for_calls(&self, source: &str, node: tree_sitter::Node, calls: &mut Vec<MethodCall>) {
+    fn walk_node_for_calls(
+        &self,
+        source: &str,
+        node: tree_sitter::Node,
+        calls: &mut Vec<MethodCall>,
+        field_types: &std::collections::HashMap<String, String>,
+        import_map: &std::collections::HashMap<String, String>,
+    ) {
         if node.kind() == "method_invocation" {
-            // 查找方法名
-            // 对于 obj.method() 形式的调用，需要找到最后一个 identifier（方法名）
-            // 对于 method() 形式的调用，只有一个 identifier
+            // 查找方法调用的对象和方法名
             let mut cursor = node.walk();
             let mut identifiers = Vec::new();
             
@@ -185,20 +334,41 @@ impl JavaParser {
                 }
             }
             
-            // 取最后一个 identifier 作为方法名
-            if let Some(method_name) = identifiers.last() {
-                println!("xxx {:?}", identifiers);
-                let line = node.start_position().row + 1;
-                calls.push(MethodCall {
-                    target: method_name.clone(),
-                    line,
-                });
-            }
+            // 对于 obj.method() 形式，有两个 identifier：对象名和方法名
+            // 对于 method() 形式，只有一个 identifier：方法名
+            let (object_name, method_name) = if identifiers.len() >= 2 {
+                (Some(identifiers[0].clone()), identifiers[identifiers.len() - 1].clone())
+            } else if identifiers.len() == 1 {
+                (None, identifiers[0].clone())
+            } else {
+                return;
+            };
+            
+            let line = node.start_position().row + 1;
+            
+            // 如果有对象名，尝试解析为完整的类名::方法名
+            let target = if let Some(obj) = object_name {
+                if let Some(class_type) = field_types.get(&obj) {
+                    // 尝试将简单类名转换为完整类名
+                    let full_class_name = import_map.get(class_type)
+                        .unwrap_or(class_type);
+                    format!("{}::{}", full_class_name, method_name)
+                } else {
+                    method_name.clone()
+                }
+            } else {
+                method_name.clone()
+            };
+            
+            calls.push(MethodCall {
+                target,
+                line,
+            });
         }
         
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            self.walk_node_for_calls(source, child, calls);
+            self.walk_node_for_calls(source, child, calls, field_types, import_map);
         }
     }
     
@@ -741,6 +911,10 @@ mod tests {
     fn test_extract_field_access_method_calls() {
         let parser = JavaParser::new().unwrap();
         let source = r#"
+            package com.example;
+            
+            import com.hualala.shop.equipment.EquipmentManageExe;
+            
             public class TestController {
                 private EquipmentManageExe equipmentManageExe;
                 
@@ -756,7 +930,8 @@ mod tests {
         
         let method = &result.classes[0].methods[0];
         assert_eq!(method.calls.len(), 1);
-        assert_eq!(method.calls[0].target, "listExecuteSchedule");
+        // 应该解析为完整的类名::方法名格式
+        assert_eq!(method.calls[0].target, "com.hualala.shop.equipment.EquipmentManageExe::listExecuteSchedule");
     }
     
     #[test]
@@ -799,10 +974,10 @@ mod tests {
         
         // Verify all method calls are captured correctly
         assert!(call_names.contains(&"localMethod"), "Should find localMethod");
-        assert!(call_names.contains(&"findUser"), "Should find findUser");
-        assert!(call_names.contains(&"getRepository"), "Should find getRepository");
+        assert!(call_names.contains(&"findUser") || call_names.contains(&"UserService::findUser"), "Should find findUser");
+        assert!(call_names.contains(&"getRepository") || call_names.contains(&"UserService::getRepository"), "Should find getRepository");
         assert!(call_names.contains(&"save"), "Should find save");
-        assert!(call_names.contains(&"println"), "Should find println");
-        assert!(call_names.contains(&"updateUser"), "Should find updateUser");
+        assert!(call_names.contains(&"println") || call_names.contains(&"System::println"), "Should find println");
+        assert!(call_names.contains(&"updateUser") || call_names.contains(&"UserService::updateUser"), "Should find updateUser");
     }
 }

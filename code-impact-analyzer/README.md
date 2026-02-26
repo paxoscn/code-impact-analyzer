@@ -57,14 +57,17 @@ cargo install --path .
 ### 基本用法
 
 ```bash
-code-impact-analyzer --workspace <工作空间路径> --diff <patch文件路径>
-cargo run -- --workspace /Users/lindagao/Workspace/javadiff/examples/single-call --diff /Users/lindagao/Workspace/javadiff/examples/single-call/md-shop-manager.patch
+code-impact-analyzer --workspace <工作空间路径> --diff <patch目录路径>
+cargo run -- --workspace /Users/lindagao/Workspace/javadiff/examples/single-call --diff /Users/lindagao/Workspace/javadiff/examples/single-call/patches
 ```
 
 ### 命令行参数
 
 - `--workspace <PATH>`: 包含多个项目源代码的工作空间根目录（必需）
-- `--diff <PATH>`: Git patch 文件路径（必需）
+- `--diff <PATH>`: Git patch 文件目录路径，包含以项目命名的多个 .patch 文件（必需）
+  - 目录中的每个 .patch 文件应以对应的项目名命名，例如 `project_a.patch` 对应 workspace 中的 `project_a` 项目
+  - 工具会自动扫描目录中的所有 .patch 文件并逐个解析
+  - 也支持传入单个 .patch 文件路径以保持向后兼容
 - `--output-format <FORMAT>`: 输出格式，可选值：`dot`（默认）、`json`、`mermaid`
 - `--max-depth <N>`: 追溯的最大深度，默认为 10
 - `--log-level <LEVEL>`: 日志级别，可选值：`debug`、`info`（默认）、`warn`、`error`
@@ -72,7 +75,34 @@ cargo run -- --workspace /Users/lindagao/Workspace/javadiff/examples/single-call
 
 ### 使用示例
 
-#### 示例 1: 分析单个 patch 文件
+#### 示例 1: 分析 patch 目录中的所有文件
+
+```bash
+code-impact-analyzer \
+  --workspace /path/to/workspace \
+  --diff /path/to/patches \
+  --output impact-graph.dot
+```
+
+假设 workspace 结构如下：
+```
+workspace/
+├── project_a/
+├── project_b/
+└── project_c/
+```
+
+patches 目录结构如下：
+```
+patches/
+├── project_a.patch
+├── project_b.patch
+└── project_c.patch
+```
+
+工具会自动解析所有 .patch 文件，并分析它们对整个 workspace 的影响。
+
+#### 示例 2: 分析单个 patch 文件（向后兼容）
 
 ```bash
 code-impact-analyzer \
@@ -81,32 +111,32 @@ code-impact-analyzer \
   --output impact-graph.dot
 ```
 
-#### 示例 2: 生成 JSON 格式输出
+#### 示例 3: 生成 JSON 格式输出
 
 ```bash
 code-impact-analyzer \
   --workspace /path/to/workspace \
-  --diff /path/to/changes.patch \
+  --diff /path/to/patches \
   --output-format json \
   --output impact-graph.json
 ```
 
-#### 示例 3: 限制追溯深度并启用详细日志
+#### 示例 4: 限制追溯深度并启用详细日志
 
 ```bash
 code-impact-analyzer \
   --workspace /path/to/workspace \
-  --diff /path/to/changes.patch \
+  --diff /path/to/patches \
   --max-depth 5 \
   --log-level debug
 ```
 
-#### 示例 4: 生成 Mermaid 格式用于文档
+#### 示例 5: 生成 Mermaid 格式用于文档
 
 ```bash
 code-impact-analyzer \
   --workspace /path/to/workspace \
-  --diff /path/to/changes.patch \
+  --diff /path/to/patches \
   --output-format mermaid \
   --output impact-graph.mmd
 ```
@@ -213,7 +243,9 @@ graph TD
 
 将 Mermaid 输出直接嵌入到 Markdown 文档中，GitHub、GitLab 等平台会自动渲染。
 
-## 工作空间结构
+## 工作空间和 Patch 目录结构
+
+### 工作空间结构
 
 工具期望的工作空间结构：
 
@@ -236,11 +268,29 @@ workspace/
     └── ...
 ```
 
+### Patch 目录结构
+
+Patch 目录应包含以项目命名的 .patch 文件：
+
+```
+patches/
+├── project-a.patch    # 对 project-a 的修改
+├── project-b.patch    # 对 project-b 的修改
+└── project-c.patch    # 对 project-c 的修改
+```
+
+每个 .patch 文件应该是标准的 Git unified diff 格式，包含对应项目的所有变更。
+
+### 分析流程
+
 工具会自动：
-1. 遍历工作空间下的所有项目
-2. 根据文件扩展名识别语言类型
-3. 解析源代码和配置文件
-4. 构建全局调用图和资源索引
+1. 扫描 patch 目录中的所有 .patch 文件
+2. 逐个解析每个 patch 文件，提取文件变更信息
+3. 遍历工作空间下的所有项目
+4. 根据文件扩展名识别语言类型
+5. 解析源代码和配置文件
+6. 构建全局调用图和资源索引
+7. 追溯所有变更的影响范围
 
 ## 支持的框架和库
 

@@ -11,7 +11,7 @@ pub struct CliArgs {
     #[arg(short = 'w', long = "workspace", value_name = "PATH")]
     pub workspace_path: PathBuf,
 
-    /// Git diff 补丁文件路径
+    /// Git diff 补丁文件目录路径，包含以项目命名的多个 patch 文件
     #[arg(short = 'd', long = "diff", value_name = "PATH")]
     pub diff_path: PathBuf,
 

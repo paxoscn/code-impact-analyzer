@@ -28,6 +28,7 @@
 
 2. **生成 patch 文件**
 
+   对于单个项目：
    ```bash
    # 从 Git 提交生成 patch
    git diff HEAD~1 > changes.patch
@@ -35,9 +36,32 @@
    # 或从两个分支之间的差异
    git diff main feature-branch > changes.patch
    ```
+   
+   对于多个项目（推荐）：
+   ```bash
+   # 为每个项目生成独立的 patch 文件
+   mkdir patches
+   
+   # 在 project_a 目录下
+   cd project_a
+   git diff HEAD~1 > ../patches/project_a.patch
+   
+   # 在 project_b 目录下
+   cd ../project_b
+   git diff HEAD~1 > ../patches/project_b.patch
+   ```
 
 3. **运行分析**
 
+   对于多个 patch 文件（推荐）：
+   ```bash
+   code-impact-analyzer \
+     --workspace my-workspace \
+     --diff patches \
+     --output impact.dot
+   ```
+   
+   对于单个 patch 文件：
    ```bash
    code-impact-analyzer \
      --workspace my-workspace \
@@ -74,13 +98,26 @@
 
 **`--diff <PATH>`**
 
-指定 Git patch 文件的路径。
+指定 Git patch 文件目录路径，包含以项目命名的多个 .patch 文件。
 
+```bash
+--diff /tmp/patches
+```
+
+目录结构示例：
+```
+patches/
+├── project_a.patch    # 对 project_a 的修改
+├── project_b.patch    # 对 project_b 的修改
+└── project_c.patch    # 对 project_c 的修改
+```
+
+工具会自动扫描目录中的所有 .patch 文件并逐个解析。
+
+也支持传入单个 .patch 文件路径以保持向后兼容：
 ```bash
 --diff /tmp/changes.patch
 ```
-
-支持标准的 Git unified diff 格式。
 
 #### 可选参数
 
@@ -419,7 +456,52 @@ graph TD
 
 ## 实际案例
 
-### 案例 1: 分析 API 变更影响
+### 案例 1: 分析多项目 API 变更影响
+
+**场景**: 在一个包含多个微服务的工作空间中，修改了多个服务的代码，需要了解整体影响范围。
+
+**步骤**:
+
+1. 为每个项目生成 patch 文件：
+   ```bash
+   mkdir patches
+   
+   cd user-service
+   git diff main feature/update-user-api > ../patches/user-service.patch
+   
+   cd ../order-service
+   git diff main feature/update-order-api > ../patches/order-service.patch
+   
+   cd ../payment-service
+   git diff main feature/update-payment-api > ../patches/payment-service.patch
+   ```
+
+2. 运行分析：
+   ```bash
+   code-impact-analyzer \
+     --workspace ~/projects/microservices \
+     --diff patches \
+     --output-format json \
+     --output multi-service-impact.json
+   ```
+
+3. 查看影响的服务：
+   ```bash
+   jq '.nodes[] | select(.type == "HttpEndpoint")' multi-service-impact.json
+   ```
+
+4. 生成可视化报告：
+   ```bash
+   code-impact-analyzer \
+     --workspace ~/projects/microservices \
+     --diff patches \
+     --output-format mermaid \
+     --output multi-service-impact.mmd
+   ```
+
+**结果**: 发现跨服务的调用链路，识别出需要协调更新的服务。
+
+### 案例 2: 分析单个服务的 API 变更影响
 
 **场景**: 修改了用户服务的 `getUser` 方法，需要了解影响范围。
 
@@ -455,7 +537,7 @@ graph TD
 
 **结果**: 发现 3 个下游服务调用了该 API，需要同步更新。
 
-### 案例 2: 分析数据库表变更影响
+### 案例 3: 分析数据库表变更影响
 
 **场景**: 需要修改 `users` 表结构，评估影响范围。
 
@@ -492,7 +574,7 @@ graph TD
 
 **结果**: 识别出 15 个方法读写该表，需要评估兼容性。
 
-### 案例 3: 分析 Kafka Topic 变更影响
+### 案例 4: 分析 Kafka Topic 变更影响
 
 **场景**: 修改了 `user-events` Topic 的消息格式。
 
@@ -547,7 +629,24 @@ workspace/
 
 ### 2. Patch 文件生成
 
-**推荐方式**:
+**推荐方式（多项目）**:
+
+```bash
+# 创建 patches 目录
+mkdir patches
+
+# 为每个项目生成独立的 patch 文件
+cd project_a
+git diff main..feature-branch > ../patches/project_a.patch
+
+cd ../project_b
+git diff main..feature-branch > ../patches/project_b.patch
+
+cd ../project_c
+git diff main..feature-branch > ../patches/project_c.patch
+```
+
+**单个项目方式**:
 
 ```bash
 # 分析特定提交
@@ -565,7 +664,8 @@ git diff --cached > changes.patch
 
 **避免**:
 - 不要包含二进制文件变更
-- 避免过大的 patch 文件（建议 < 10MB）
+- 避免过大的 patch 文件（建议单个文件 < 10MB）
+- 确保 patch 文件名与项目名对应（多项目场景）
 
 ### 3. 深度设置
 

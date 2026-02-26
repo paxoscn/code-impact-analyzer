@@ -125,25 +125,25 @@ impl AnalysisOrchestrator {
     /// 执行完整的分析流程
     /// 
     /// # Arguments
-    /// * `patch_path` - Git patch 文件路径
+    /// * `patch_dir` - Git patch 文件目录路径
     /// 
     /// # Returns
     /// * `Ok(AnalysisResult)` - 分析结果
     /// * `Err(AnalysisError)` - 分析错误
-    pub fn analyze(&mut self, patch_path: &Path) -> Result<AnalysisResult, AnalysisError> {
+    pub fn analyze(&mut self, patch_dir: &Path) -> Result<AnalysisResult, AnalysisError> {
         let start_time = Instant::now();
         
         log::info!("Starting code impact analysis");
         log::info!("Workspace: {:?}", self.workspace_path);
-        log::info!("Patch file: {:?}", patch_path);
+        log::info!("Patch directory: {:?}", patch_dir);
         
         // 清空之前的警告和错误
         self.warnings.clear();
         self.errors.clear();
         
-        // 步骤 1: 解析 patch 文件
-        log::info!("Step 1: Parsing patch file");
-        let file_changes = self.parse_patch(patch_path)?;
+        // 步骤 1: 解析 patch 目录中的所有文件
+        log::info!("Step 1: Parsing patch files from directory");
+        let file_changes = self.parse_patches_from_directory(patch_dir)?;
         log::info!("Found {} file changes", file_changes.len());
         
         // 步骤 2: 构建代码索引
@@ -185,7 +185,85 @@ impl AnalysisOrchestrator {
         })
     }
     
-    /// 解析 patch 文件
+    /// 解析 patch 目录中的所有文件
+    fn parse_patches_from_directory(&mut self, patch_dir: &Path) -> Result<Vec<FileChange>, AnalysisError> {
+        // 检查路径是否存在
+        if !patch_dir.exists() {
+            let error_msg = format!("Patch directory does not exist: {:?}", patch_dir);
+            self.errors.push(error_msg.clone());
+            return Err(AnalysisError::IoError(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                error_msg,
+            )));
+        }
+        
+        // 如果是文件，直接解析（向后兼容）
+        if patch_dir.is_file() {
+            log::warn!("--diff points to a file instead of directory, parsing single file for backward compatibility");
+            return self.parse_patch(patch_dir);
+        }
+        
+        // 如果是目录，遍历所有 .patch 文件
+        if !patch_dir.is_dir() {
+            let error_msg = format!("Patch path is neither a file nor a directory: {:?}", patch_dir);
+            self.errors.push(error_msg.clone());
+            return Err(AnalysisError::IoError(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                error_msg,
+            )));
+        }
+        
+        let mut all_changes = Vec::new();
+        let entries = std::fs::read_dir(patch_dir)
+            .map_err(|e| {
+                let error_msg = format!("Failed to read patch directory: {}", e);
+                self.errors.push(error_msg.clone());
+                AnalysisError::IoError(e)
+            })?;
+        
+        let mut patch_files = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|e| AnalysisError::IoError(e))?;
+            let path = entry.path();
+            
+            // 只处理 .patch 文件
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("patch") {
+                patch_files.push(path);
+            }
+        }
+        
+        if patch_files.is_empty() {
+            let warning = format!("No .patch files found in directory: {:?}", patch_dir);
+            log::warn!("{}", warning);
+            self.warnings.push(warning);
+            return Ok(Vec::new());
+        }
+        
+        log::info!("Found {} patch files to process", patch_files.len());
+        
+        // 解析每个 patch 文件
+        for patch_file in patch_files {
+            log::info!("Processing patch file: {:?}", patch_file);
+            
+            match self.parse_patch(&patch_file) {
+                Ok(mut changes) => {
+                    log::info!("  - Parsed {} file changes from {:?}", changes.len(), patch_file.file_name().unwrap());
+                    all_changes.append(&mut changes);
+                }
+                Err(e) => {
+                    let warning = format!("Failed to parse patch file {:?}: {}", patch_file, e);
+                    log::warn!("{}", warning);
+                    self.warnings.push(warning);
+                    // 继续处理其他文件，不中断整个流程
+                }
+            }
+        }
+        
+        log::info!("Total file changes from all patches: {}", all_changes.len());
+        Ok(all_changes)
+    }
+    
+    /// 解析单个 patch 文件
     fn parse_patch(&mut self, patch_path: &Path) -> Result<Vec<FileChange>, AnalysisError> {
         match PatchParser::parse_patch_file(patch_path) {
             Ok(changes) => Ok(changes),
@@ -480,6 +558,142 @@ mod tests {
         // 应该返回错误
         assert!(result.is_err());
         assert_eq!(orchestrator.errors.len(), 1);
+    }
+    
+    #[test]
+    fn test_parse_patches_from_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_path = temp_dir.path().to_path_buf();
+        let trace_config = TraceConfig::default();
+        let mut orchestrator = AnalysisOrchestrator::new(workspace_path, trace_config).unwrap();
+        
+        // 创建 patches 目录
+        let patches_dir = temp_dir.path().join("patches");
+        fs::create_dir(&patches_dir).unwrap();
+        
+        // 创建多个 patch 文件
+        let patch1_content = r#"diff --git a/file1.txt b/file1.txt
+index 1234567..abcdefg 100644
+--- a/file1.txt
++++ b/file1.txt
+@@ -1,2 +1,2 @@
+ line 1
+-line 2
++line 2 modified
+"#;
+        
+        let patch2_content = r#"diff --git a/file2.txt b/file2.txt
+index 2345678..bcdefgh 100644
+--- a/file2.txt
++++ b/file2.txt
+@@ -1,2 +1,3 @@
+ line 1
+ line 2
++line 3
+"#;
+        
+        let mut file1 = fs::File::create(patches_dir.join("project_a.patch")).unwrap();
+        file1.write_all(patch1_content.as_bytes()).unwrap();
+        
+        let mut file2 = fs::File::create(patches_dir.join("project_b.patch")).unwrap();
+        file2.write_all(patch2_content.as_bytes()).unwrap();
+        
+        // 解析目录
+        let result = orchestrator.parse_patches_from_directory(&patches_dir);
+        
+        // 应该成功解析两个文件
+        assert!(result.is_ok());
+        let changes = result.unwrap();
+        assert_eq!(changes.len(), 2);
+    }
+    
+    #[test]
+    fn test_parse_patches_from_directory_with_non_patch_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_path = temp_dir.path().to_path_buf();
+        let trace_config = TraceConfig::default();
+        let mut orchestrator = AnalysisOrchestrator::new(workspace_path, trace_config).unwrap();
+        
+        // 创建 patches 目录
+        let patches_dir = temp_dir.path().join("patches");
+        fs::create_dir(&patches_dir).unwrap();
+        
+        // 创建一个 patch 文件和一个非 patch 文件
+        let patch_content = r#"diff --git a/file1.txt b/file1.txt
+index 1234567..abcdefg 100644
+--- a/file1.txt
++++ b/file1.txt
+@@ -1,2 +1,2 @@
+ line 1
+-line 2
++line 2 modified
+"#;
+        
+        let mut patch_file = fs::File::create(patches_dir.join("project_a.patch")).unwrap();
+        patch_file.write_all(patch_content.as_bytes()).unwrap();
+        
+        let mut txt_file = fs::File::create(patches_dir.join("readme.txt")).unwrap();
+        txt_file.write_all(b"This is not a patch file").unwrap();
+        
+        // 解析目录
+        let result = orchestrator.parse_patches_from_directory(&patches_dir);
+        
+        // 应该只解析 .patch 文件
+        assert!(result.is_ok());
+        let changes = result.unwrap();
+        assert_eq!(changes.len(), 1);
+    }
+    
+    #[test]
+    fn test_parse_patches_from_directory_empty() {
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_path = temp_dir.path().to_path_buf();
+        let trace_config = TraceConfig::default();
+        let mut orchestrator = AnalysisOrchestrator::new(workspace_path, trace_config).unwrap();
+        
+        // 创建空的 patches 目录
+        let patches_dir = temp_dir.path().join("patches");
+        fs::create_dir(&patches_dir).unwrap();
+        
+        // 解析目录
+        let result = orchestrator.parse_patches_from_directory(&patches_dir);
+        
+        // 应该返回空列表并有警告
+        assert!(result.is_ok());
+        let changes = result.unwrap();
+        assert_eq!(changes.len(), 0);
+        assert_eq!(orchestrator.warnings.len(), 1);
+    }
+    
+    #[test]
+    fn test_parse_patches_from_single_file_backward_compatibility() {
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_path = temp_dir.path().to_path_buf();
+        let trace_config = TraceConfig::default();
+        let mut orchestrator = AnalysisOrchestrator::new(workspace_path, trace_config).unwrap();
+        
+        // 创建单个 patch 文件
+        let patch_content = r#"diff --git a/file1.txt b/file1.txt
+index 1234567..abcdefg 100644
+--- a/file1.txt
++++ b/file1.txt
+@@ -1,2 +1,2 @@
+ line 1
+-line 2
++line 2 modified
+"#;
+        
+        let patch_path = temp_dir.path().join("single.patch");
+        let mut file = fs::File::create(&patch_path).unwrap();
+        file.write_all(patch_content.as_bytes()).unwrap();
+        
+        // 解析单个文件（向后兼容）
+        let result = orchestrator.parse_patches_from_directory(&patch_path);
+        
+        // 应该成功解析
+        assert!(result.is_ok());
+        let changes = result.unwrap();
+        assert_eq!(changes.len(), 1);
     }
     
     #[test]

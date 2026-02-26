@@ -59,6 +59,7 @@ cargo install --path .
 ```bash
 code-impact-analyzer --workspace <工作空间路径> --diff <patch目录路径>
 cargo run -- --workspace /Users/lindagao/Workspace/javadiff/examples/single-call --diff /Users/lindagao/Workspace/javadiff/examples/single-call/patches
+cargo run -- --workspace /Users/lindagao/Workspace/test/ws --diff /Users/lindagao/Workspace/javadiff/examples/single-call/patches
 ```
 
 ### 命令行参数
@@ -281,16 +282,45 @@ patches/
 
 每个 .patch 文件应该是标准的 Git unified diff 格式，包含对应项目的所有变更。
 
+**重要**: patch 文件名（去掉 .patch 扩展名）会被用作项目目录前缀。例如：
+- `project-a.patch` 中的文件路径 `src/ServiceA.java` 会被解析为 `project-a/src/ServiceA.java`
+- `project-b.patch` 中的文件路径 `src/lib.rs` 会被解析为 `project-b/src/lib.rs`
+
+这样可以确保工具能够在 workspace 中正确定位文件。
+
+### Patch 文件内容示例
+
+`project-a.patch` 内容：
+```diff
+diff --git a/src/ServiceA.java b/src/ServiceA.java
+index 1234567..abcdefg 100644
+--- a/src/ServiceA.java
++++ b/src/ServiceA.java
+@@ -10,7 +10,8 @@ public class ServiceA {
+     }
+     
+     public void processData(String data) {
+-        System.out.println("Processing: " + data);
++        System.out.println("Processing data: " + data);
++        validateData(data);
+     }
+ }
+```
+
+工具会自动将文件路径 `src/ServiceA.java` 转换为 `project-a/src/ServiceA.java`，然后在 workspace 中查找该文件。
+
 ### 分析流程
 
 工具会自动：
 1. 扫描 patch 目录中的所有 .patch 文件
-2. 逐个解析每个 patch 文件，提取文件变更信息
-3. 遍历工作空间下的所有项目
-4. 根据文件扩展名识别语言类型
-5. 解析源代码和配置文件
-6. 构建全局调用图和资源索引
-7. 追溯所有变更的影响范围
+2. 从文件名提取项目名（去掉 .patch 扩展名）
+3. 逐个解析每个 patch 文件，提取文件变更信息
+4. 为每个文件路径添加项目名前缀
+5. 遍历工作空间下的所有项目
+6. 根据文件扩展名识别语言类型
+7. 解析源代码和配置文件
+8. 构建全局调用图和资源索引
+9. 追溯所有变更的影响范围
 
 ## 支持的框架和库
 

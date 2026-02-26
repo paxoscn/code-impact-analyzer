@@ -200,7 +200,7 @@ impl AnalysisOrchestrator {
         // 如果是文件，直接解析（向后兼容）
         if patch_dir.is_file() {
             log::warn!("--diff points to a file instead of directory, parsing single file for backward compatibility");
-            return self.parse_patch(patch_dir);
+            return self.parse_patch(patch_dir, None);
         }
         
         // 如果是目录，遍历所有 .patch 文件
@@ -245,7 +245,17 @@ impl AnalysisOrchestrator {
         for patch_file in patch_files {
             log::info!("Processing patch file: {:?}", patch_file);
             
-            match self.parse_patch(&patch_file) {
+            // 从文件名提取项目名（去掉 .patch 扩展名）
+            let project_name = patch_file
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_string());
+            
+            if let Some(ref name) = project_name {
+                log::info!("  - Project name: {}", name);
+            }
+            
+            match self.parse_patch(&patch_file, project_name) {
                 Ok(mut changes) => {
                     log::info!("  - Parsed {} file changes from {:?}", changes.len(), patch_file.file_name().unwrap());
                     all_changes.append(&mut changes);
@@ -264,9 +274,23 @@ impl AnalysisOrchestrator {
     }
     
     /// 解析单个 patch 文件
-    fn parse_patch(&mut self, patch_path: &Path) -> Result<Vec<FileChange>, AnalysisError> {
+    /// 
+    /// # 参数
+    /// * `patch_path` - patch 文件路径
+    /// * `project_prefix` - 可选的项目名前缀，将添加到文件路径前
+    fn parse_patch(&mut self, patch_path: &Path, project_prefix: Option<String>) -> Result<Vec<FileChange>, AnalysisError> {
         match PatchParser::parse_patch_file(patch_path) {
-            Ok(changes) => Ok(changes),
+            Ok(mut changes) => {
+                // 如果提供了项目前缀，添加到所有文件路径前
+                if let Some(prefix) = project_prefix {
+                    for change in &mut changes {
+                        // 添加项目名作为目录前缀
+                        change.file_path = format!("{}/{}", prefix, change.file_path);
+                        log::debug!("  - Prefixed file path: {}", change.file_path);
+                    }
+                }
+                Ok(changes)
+            }
             Err(e) => {
                 let error_msg = format!("Failed to parse patch file: {}", e);
                 self.errors.push(error_msg.clone());
@@ -553,7 +577,7 @@ mod tests {
         file.write_all(b"not a valid patch").unwrap();
         
         // 尝试解析
-        let result = orchestrator.parse_patch(&patch_path);
+        let result = orchestrator.parse_patch(&patch_path, None);
         
         // 应该返回错误
         assert!(result.is_err());
@@ -694,6 +718,92 @@ index 1234567..abcdefg 100644
         assert!(result.is_ok());
         let changes = result.unwrap();
         assert_eq!(changes.len(), 1);
+    }
+    
+    #[test]
+    fn test_parse_patch_with_project_prefix() {
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_path = temp_dir.path().to_path_buf();
+        let trace_config = TraceConfig::default();
+        let mut orchestrator = AnalysisOrchestrator::new(workspace_path, trace_config).unwrap();
+        
+        // 创建 patch 文件
+        let patch_content = r#"diff --git a/src/ServiceA.java b/src/ServiceA.java
+index 1234567..abcdefg 100644
+--- a/src/ServiceA.java
++++ b/src/ServiceA.java
+@@ -1,2 +1,2 @@
+ line 1
+-line 2
++line 2 modified
+"#;
+        
+        let patch_path = temp_dir.path().join("project_a.patch");
+        let mut file = fs::File::create(&patch_path).unwrap();
+        file.write_all(patch_content.as_bytes()).unwrap();
+        
+        // 解析时带上项目前缀
+        let result = orchestrator.parse_patch(&patch_path, Some("project_a".to_string()));
+        
+        // 应该成功解析
+        assert!(result.is_ok());
+        let changes = result.unwrap();
+        assert_eq!(changes.len(), 1);
+        
+        // 验证文件路径包含项目前缀
+        assert_eq!(changes[0].file_path, "project_a/src/ServiceA.java");
+    }
+    
+    #[test]
+    fn test_parse_patches_from_directory_with_project_prefix() {
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_path = temp_dir.path().to_path_buf();
+        let trace_config = TraceConfig::default();
+        let mut orchestrator = AnalysisOrchestrator::new(workspace_path, trace_config).unwrap();
+        
+        // 创建 patches 目录
+        let patches_dir = temp_dir.path().join("patches");
+        fs::create_dir(&patches_dir).unwrap();
+        
+        // 创建多个 patch 文件
+        let patch1_content = r#"diff --git a/src/ServiceA.java b/src/ServiceA.java
+index 1234567..abcdefg 100644
+--- a/src/ServiceA.java
++++ b/src/ServiceA.java
+@@ -1,2 +1,2 @@
+ line 1
+-line 2
++line 2 modified
+"#;
+        
+        let patch2_content = r#"diff --git a/src/ServiceB.java b/src/ServiceB.java
+index 2345678..bcdefgh 100644
+--- a/src/ServiceB.java
++++ b/src/ServiceB.java
+@@ -1,2 +1,3 @@
+ line 1
+ line 2
++line 3
+"#;
+        
+        let mut file1 = fs::File::create(patches_dir.join("project_a.patch")).unwrap();
+        file1.write_all(patch1_content.as_bytes()).unwrap();
+        
+        let mut file2 = fs::File::create(patches_dir.join("project_b.patch")).unwrap();
+        file2.write_all(patch2_content.as_bytes()).unwrap();
+        
+        // 解析目录
+        let result = orchestrator.parse_patches_from_directory(&patches_dir);
+        
+        // 应该成功解析两个文件
+        assert!(result.is_ok());
+        let changes = result.unwrap();
+        assert_eq!(changes.len(), 2);
+        
+        // 验证文件路径包含项目前缀（不依赖顺序）
+        let paths: Vec<String> = changes.iter().map(|c| c.file_path.clone()).collect();
+        assert!(paths.contains(&"project_a/src/ServiceA.java".to_string()));
+        assert!(paths.contains(&"project_b/src/ServiceB.java".to_string()));
     }
     
     #[test]

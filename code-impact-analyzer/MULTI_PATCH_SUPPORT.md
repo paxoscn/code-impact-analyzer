@@ -106,6 +106,34 @@ cd ../project_c
 git diff main..feature-branch > ../patches/project_c.patch
 ```
 
+**重要**: 
+- Patch 文件名（去掉 .patch 扩展名）必须与 workspace 中的项目目录名一致
+- 例如：`project_a.patch` 对应 `workspace/project_a/` 目录
+- 工具会自动将 patch 中的文件路径添加项目名前缀
+
+### 文件路径前缀处理
+
+工具会自动为 patch 文件中的每个文件路径添加项目名前缀：
+
+**示例**:
+
+`project_a.patch` 内容：
+```diff
+diff --git a/src/ServiceA.java b/src/ServiceA.java
+index 1234567..abcdefg 100644
+--- a/src/ServiceA.java
++++ b/src/ServiceA.java
+@@ -10,7 +10,8 @@ public class ServiceA {
+     }
+```
+
+工具会将文件路径 `src/ServiceA.java` 转换为 `project_a/src/ServiceA.java`，然后在 workspace 中查找该文件。
+
+这样可以确保：
+1. 多个项目可以有相同的文件路径结构
+2. 工具能够正确定位每个项目中的文件
+3. 避免文件路径冲突
+
 ### 在 CI/CD 中使用
 
 ```yaml
@@ -138,9 +166,10 @@ git diff main..feature-branch > ../patches/project_c.patch
 ## 注意事项
 
 1. Patch 文件应该是标准的 Git unified diff 格式
-2. 建议 patch 文件名与项目名对应，便于识别
-3. 单个 patch 文件建议不超过 10MB
-4. 如果某个 patch 文件解析失败，工具会记录警告并继续处理其他文件
+2. **Patch 文件名（去掉 .patch 扩展名）必须与 workspace 中的项目目录名一致**
+3. 工具会自动为 patch 中的文件路径添加项目名前缀
+4. 单个 patch 文件建议不超过 10MB
+5. 如果某个 patch 文件解析失败，工具会记录警告并继续处理其他文件
 
 ## 测试
 

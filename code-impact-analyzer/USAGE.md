@@ -50,6 +50,8 @@
    cd ../project_b
    git diff HEAD~1 > ../patches/project_b.patch
    ```
+   
+   **重要**: Patch 文件名（去掉 .patch 扩展名）必须与 workspace 中的项目目录名一致。例如：`project_a.patch` 对应 `workspace/project_a/` 目录。
 
 3. **运行分析**
 
@@ -645,6 +647,11 @@ git diff main..feature-branch > ../patches/project_b.patch
 cd ../project_c
 git diff main..feature-branch > ../patches/project_c.patch
 ```
+
+**重要**: 
+- Patch 文件名（去掉 .patch 扩展名）必须与 workspace 中的项目目录名一致
+- 例如：`project_a.patch` 对应 `workspace/project_a/` 目录
+- 工具会自动将 patch 中的文件路径添加项目名前缀
 
 **单个项目方式**:
 

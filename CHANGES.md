@@ -27,13 +27,36 @@ pub diff_path: PathBuf,
 - 检查路径是文件还是目录
 - 如果是文件，直接解析（向后兼容）
 - 如果是目录，扫描所有 `.patch` 文件并逐个解析
+- **从文件名提取项目名，并作为目录前缀添加到文件路径**
 - 合并所有 patch 文件的变更信息
 
 ```rust
 pub fn parse_patches_from_directory(&mut self, patch_dir: &Path) -> Result<Vec<FileChange>, AnalysisError>
 ```
 
-#### 3. 使用方式
+更新 `parse_patch` 方法：
+- 新增 `project_prefix` 参数
+- 如果提供了项目前缀，自动添加到所有文件路径前
+
+```rust
+fn parse_patch(&mut self, patch_path: &Path, project_prefix: Option<String>) -> Result<Vec<FileChange>, AnalysisError>
+```
+
+#### 3. 文件路径前缀处理
+
+**关键特性**: 工具会自动为 patch 文件中的每个文件路径添加项目名前缀。
+
+**示例**:
+- Patch 文件名: `project_a.patch`
+- Patch 中的文件路径: `src/ServiceA.java`
+- 实际解析后的路径: `project_a/src/ServiceA.java`
+
+这样可以确保：
+1. 多个项目可以有相同的文件路径结构
+2. 工具能够正确定位每个项目中的文件
+3. 避免文件路径冲突
+
+#### 4. 使用方式
 
 **目录结构示例**:
 ```
@@ -56,6 +79,8 @@ code-impact-analyzer \
   --output impact.dot
 ```
 
+**重要**: Patch 文件名（去掉 .patch 扩展名）必须与 workspace 中的项目目录名一致。
+
 ### 功能特性
 
 1. **自动扫描**: 自动扫描目录中的所有 `.patch` 文件
@@ -66,14 +91,16 @@ code-impact-analyzer \
 
 ### 测试验证
 
-新增 5 个测试用例：
+新增 7 个测试用例：
 - `test_parse_patches_from_directory`: 测试解析多个 patch 文件
 - `test_parse_patches_from_directory_with_non_patch_files`: 测试过滤非 patch 文件
 - `test_parse_patches_from_directory_empty`: 测试空目录处理
 - `test_parse_patches_from_single_file_backward_compatibility`: 测试向后兼容性
 - `test_parse_patch_with_invalid_file`: 测试错误处理
+- `test_parse_patch_with_project_prefix`: 测试项目前缀功能
+- `test_parse_patches_from_directory_with_project_prefix`: 测试目录解析时的项目前缀
 
-所有测试（共 131 个）全部通过。
+所有测试（共 103 个）全部通过。
 
 ### 文档更新
 

@@ -24,6 +24,7 @@
 - 并行处理大型代码库，提升分析性能
 - 解析结果缓存，避免重复解析
 - 完善的错误处理和日志记录
+- **智能过滤外部库调用**: 自动忽略找不到源代码的外部库方法（如 JDK、标准库等），只追溯项目内部的调用链
 
 ## 安装
 
@@ -292,6 +293,35 @@ database:
 ```
 
 ## 高级功能
+
+### 外部库调用过滤
+
+工具会自动识别并忽略对外部库的方法调用，只追溯项目内部的代码。这包括：
+
+- **Java**: JDK 标准库（如 `System.out.println`、`String.format`、`Objects.requireNonNull` 等）
+- **Rust**: 标准库和第三方 crate（如 `println!`、`format!`、`assert!` 等）
+
+**工作原理**:
+- 工具只索引工作空间内的源代码文件
+- 在追溯调用链时，如果被调用的方法不在索引中，则自动跳过
+- 这样可以避免影响图中出现大量无关的外部库节点，保持图的清晰和可读性
+
+**示例**:
+
+假设有以下代码：
+```java
+public void processData(String data) {
+    validateData(data);           // 内部方法，会被追溯
+    System.out.println(data);     // 外部库，自动忽略
+    String.format("Data: %s", data); // 外部库，自动忽略
+}
+
+public void validateData(String data) {
+    Objects.requireNonNull(data); // 外部库，自动忽略
+}
+```
+
+影响图中只会包含 `processData` 和 `validateData` 两个节点，以及它们之间的调用关系。
 
 ### 循环依赖检测
 

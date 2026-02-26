@@ -513,6 +513,11 @@ impl<'a> ImpactTracer<'a> {
         let callers = self.index.find_callers(method);
         
         for caller in callers {
+            // 检查调用者是否在索引中（忽略外部库）
+            if self.index.find_method(caller).is_none() {
+                continue;
+            }
+            
             // 添加调用者节点
             let caller_node = ImpactNode::method(caller.to_string());
             graph.add_node(caller_node);
@@ -569,6 +574,11 @@ impl<'a> ImpactTracer<'a> {
         let callees = self.index.find_callees(method);
         
         for callee in callees {
+            // 检查被调用者是否在索引中（忽略外部库）
+            if self.index.find_method(callee).is_none() {
+                continue;
+            }
+            
             // 添加被调用者节点
             let callee_node = ImpactNode::method(callee.to_string());
             graph.add_node(callee_node);

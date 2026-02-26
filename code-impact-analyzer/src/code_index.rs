@@ -716,6 +716,7 @@ mod tests {
         let method = MethodInfo {
             name: "foo".to_string(),
             full_qualified_name: "com.example.Foo::foo".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (10, 20),
             calls: vec![
                 MethodCall {
@@ -750,6 +751,7 @@ mod tests {
         let producer_method = MethodInfo {
             name: "sendMessage".to_string(),
             full_qualified_name: "com.example.Producer::sendMessage".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (10, 20),
             calls: vec![],
             http_annotations: None,
@@ -777,6 +779,7 @@ mod tests {
         let method = MethodInfo {
             name: "getUser".to_string(),
             full_qualified_name: "com.example.UserDao::getUser".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (10, 20),
             calls: vec![],
             http_annotations: None,
@@ -804,6 +807,7 @@ mod tests {
         let method = MethodInfo {
             name: "cacheUser".to_string(),
             full_qualified_name: "com.example.UserCache::cacheUser".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (10, 20),
             calls: vec![],
             http_annotations: None,
@@ -831,6 +835,7 @@ mod tests {
         let method = MethodInfo {
             name: "testMethod".to_string(),
             full_qualified_name: "com.example.Test::testMethod".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (5, 15),
             calls: vec![],
             http_annotations: None,
@@ -859,6 +864,7 @@ mod tests {
         let method_a = MethodInfo {
             name: "methodA".to_string(),
             full_qualified_name: "com.example.A::methodA".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (1, 10),
             calls: vec![
                 MethodCall {
@@ -875,6 +881,7 @@ mod tests {
         let method_b = MethodInfo {
             name: "methodB".to_string(),
             full_qualified_name: "com.example.B::methodB".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (1, 10),
             calls: vec![
                 MethodCall {
@@ -891,6 +898,7 @@ mod tests {
         let method_c = MethodInfo {
             name: "methodC".to_string(),
             full_qualified_name: "com.example.C::methodC".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (1, 10),
             calls: vec![],
             http_annotations: None,
@@ -933,6 +941,7 @@ mod tests {
         let provider = MethodInfo {
             name: "getUser".to_string(),
             full_qualified_name: "com.example.UserController::getUser".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (10, 20),
             calls: vec![],
             http_annotations: Some(HttpAnnotation {
@@ -967,6 +976,7 @@ mod tests {
         let producer = MethodInfo {
             name: "sendEvent".to_string(),
             full_qualified_name: "com.example.EventProducer::sendEvent".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (10, 20),
             calls: vec![],
             http_annotations: None,
@@ -984,6 +994,7 @@ mod tests {
         let consumer = MethodInfo {
             name: "handleEvent".to_string(),
             full_qualified_name: "com.example.EventConsumer::handleEvent".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (30, 40),
             calls: vec![],
             http_annotations: None,
@@ -1021,6 +1032,7 @@ mod tests {
         let reader = MethodInfo {
             name: "findUser".to_string(),
             full_qualified_name: "com.example.UserRepository::findUser".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (10, 20),
             calls: vec![],
             http_annotations: None,
@@ -1038,6 +1050,7 @@ mod tests {
         let writer = MethodInfo {
             name: "saveUser".to_string(),
             full_qualified_name: "com.example.UserRepository::saveUser".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (30, 40),
             calls: vec![],
             http_annotations: None,
@@ -1075,6 +1088,7 @@ mod tests {
         let reader = MethodInfo {
             name: "getCache".to_string(),
             full_qualified_name: "com.example.CacheService::getCache".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (10, 20),
             calls: vec![],
             http_annotations: None,
@@ -1092,6 +1106,7 @@ mod tests {
         let writer = MethodInfo {
             name: "setCache".to_string(),
             full_qualified_name: "com.example.CacheService::setCache".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (30, 40),
             calls: vec![],
             http_annotations: None,
@@ -1130,6 +1145,7 @@ mod tests {
         let method_a = MethodInfo {
             name: "methodA".to_string(),
             full_qualified_name: "com.example.A::methodA".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (1, 10),
             calls: vec![
                 MethodCall {
@@ -1146,6 +1162,7 @@ mod tests {
         let method_b = MethodInfo {
             name: "methodB".to_string(),
             full_qualified_name: "com.example.B::methodB".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (1, 10),
             calls: vec![
                 MethodCall {
@@ -1177,6 +1194,7 @@ mod tests {
         let producer = MethodInfo {
             name: "sendEvent".to_string(),
             full_qualified_name: "com.example.Producer::sendEvent".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (10, 20),
             calls: vec![],
             http_annotations: None,
@@ -1194,6 +1212,7 @@ mod tests {
         let consumer = MethodInfo {
             name: "handleEvent".to_string(),
             full_qualified_name: "com.example.Consumer::handleEvent".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (30, 40),
             calls: vec![],
             http_annotations: None,
@@ -1233,6 +1252,7 @@ mod tests {
         let reader = MethodInfo {
             name: "getUser".to_string(),
             full_qualified_name: "com.example.UserDao::getUser".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (10, 20),
             calls: vec![],
             http_annotations: None,
@@ -1250,6 +1270,7 @@ mod tests {
         let writer = MethodInfo {
             name: "saveUser".to_string(),
             full_qualified_name: "com.example.UserDao::saveUser".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (30, 40),
             calls: vec![],
             http_annotations: None,
@@ -1289,6 +1310,7 @@ mod tests {
         let reader = MethodInfo {
             name: "getCache".to_string(),
             full_qualified_name: "com.example.Cache::getCache".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (10, 20),
             calls: vec![],
             http_annotations: None,
@@ -1306,6 +1328,7 @@ mod tests {
         let writer = MethodInfo {
             name: "setCache".to_string(),
             full_qualified_name: "com.example.Cache::setCache".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (30, 40),
             calls: vec![],
             http_annotations: None,
@@ -1382,6 +1405,7 @@ mod tests {
         let provider = MethodInfo {
             name: "getUser".to_string(),
             full_qualified_name: "com.example.UserController::getUser".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (10, 20),
             calls: vec![],
             http_annotations: Some(HttpAnnotation {
@@ -1398,6 +1422,7 @@ mod tests {
         let consumer = MethodInfo {
             name: "fetchUser".to_string(),
             full_qualified_name: "com.example.UserClient::fetchUser".to_string(),
+            file_path: std::path::PathBuf::from("test.java"),
             line_range: (30, 40),
             calls: vec![
                 MethodCall {

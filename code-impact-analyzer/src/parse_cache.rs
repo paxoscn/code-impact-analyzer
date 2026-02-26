@@ -96,6 +96,7 @@ mod tests {
                         MethodInfo {
                             name: "testMethod".to_string(),
                             full_qualified_name: "com.example.TestClass::testMethod".to_string(),
+                            file_path: file_path.to_path_buf(),
                             line_range: (10, 20),
                             calls: vec![],
                             http_annotations: None,

@@ -6,6 +6,15 @@ use crate::errors::ParseError;
 use crate::language_parser::{LanguageParser, ParsedFile, ClassInfo, MethodInfo, MethodCall};
 use crate::types::*;
 
+/// FeignClient 注解信息
+#[derive(Debug, Clone)]
+struct FeignClientInfo {
+    /// 服务名称（value 或 name 属性）
+    service_name: String,
+    /// 基础路径（path 属性）
+    base_path: Option<String>,
+}
+
 /// Java 语言解析器
 /// 
 /// 使用 tree-sitter-java 解析 Java 源代码
@@ -82,8 +91,11 @@ impl JavaParser {
         let line_start = class_node.start_position().row + 1;
         let line_end = class_node.end_position().row + 1;
         
+        // 提取类级别的 FeignClient 注解
+        let feign_client_info = self.extract_feign_client_annotation(source, &class_node);
+        
         // 提取类中的方法
-        let methods = self.extract_methods_from_class(source, file_path, &class_node, &full_class_name, tree);
+        let methods = self.extract_methods_from_class(source, file_path, &class_node, &full_class_name, tree, &feign_client_info);
         
         Some(ClassInfo {
             name: full_class_name,
@@ -114,6 +126,116 @@ impl JavaParser {
         None
     }
     
+    /// 提取类级别的 FeignClient 注解
+    fn extract_feign_client_annotation(&self, source: &str, class_node: &tree_sitter::Node) -> Option<FeignClientInfo> {
+        // 查找类节点的 modifiers 子节点
+        let mut cursor = class_node.walk();
+        for child in class_node.children(&mut cursor) {
+            if child.kind() == "modifiers" {
+                // 在 modifiers 中查找注解
+                let mut mod_cursor = child.walk();
+                for mod_child in child.children(&mut mod_cursor) {
+                    if mod_child.kind() == "marker_annotation" || mod_child.kind() == "annotation" {
+                        if let Some(feign_info) = self.parse_feign_client_annotation(source, mod_child) {
+                            return Some(feign_info);
+                        }
+                    }
+                }
+            }
+        }
+        
+        None
+    }
+    
+    /// 解析 FeignClient 注解
+    fn parse_feign_client_annotation(&self, source: &str, annotation_node: tree_sitter::Node) -> Option<FeignClientInfo> {
+        // 获取注解名称
+        let mut cursor = annotation_node.walk();
+        let mut annotation_name = None;
+        let mut annotation_args = None;
+        
+        for child in annotation_node.children(&mut cursor) {
+            if child.kind() == "identifier" || child.kind() == "scoped_identifier" {
+                if let Some(text) = source.get(child.byte_range()) {
+                    annotation_name = Some(text.to_string());
+                }
+            } else if child.kind() == "annotation_argument_list" {
+                if let Some(text) = source.get(child.byte_range()) {
+                    annotation_args = Some(text.to_string());
+                }
+            }
+        }
+        
+        let name = annotation_name?;
+        
+        // 检查是否是 FeignClient 注解
+        if !name.contains("FeignClient") {
+            return None;
+        }
+        
+        let args_text = annotation_args?;
+        
+        // 提取 value 或 name 属性（服务名称）
+        let service_name = self.extract_feign_attribute(&args_text, "value")
+            .or_else(|| self.extract_feign_attribute(&args_text, "name"))?;
+        
+        // 提取 path 属性（基础路径）
+        let base_path = self.extract_feign_attribute(&args_text, "path");
+        
+        Some(FeignClientInfo {
+            service_name,
+            base_path,
+        })
+    }
+    
+    /// 从 FeignClient 注解参数中提取指定属性的值
+    fn extract_feign_attribute(&self, args: &str, attr_name: &str) -> Option<String> {
+        // 匹配 attr_name = "value" 格式
+        let pattern = format!(r#"{}\s*=\s*"([^"]+)""#, attr_name);
+        let re = Regex::new(&pattern).ok()?;
+        
+        if let Some(cap) = re.captures(args) {
+            return cap.get(1).map(|m| m.as_str().to_string());
+        }
+        
+        None
+    }
+    
+    /// 提取 Feign 方法的 HTTP 注解（组合类级别和方法级别的路径）
+    fn extract_feign_http_annotation(
+        &self,
+        source: &str,
+        method_node: &tree_sitter::Node,
+        feign_info: &FeignClientInfo,
+    ) -> Option<HttpAnnotation> {
+        // 提取方法级别的 HTTP 注解
+        let method_http = self.extract_http_annotations(source, method_node)?;
+        
+        // 组合路径：service_name/base_path/method_path
+        let mut full_path = feign_info.service_name.clone();
+        
+        if let Some(base_path) = &feign_info.base_path {
+            // 确保路径正确拼接
+            if !full_path.ends_with('/') {
+                full_path.push('/');
+            }
+            full_path.push_str(base_path.trim_start_matches('/'));
+        }
+        
+        // 添加方法路径
+        let method_path = method_http.path.trim_start_matches('/');
+        if !full_path.ends_with('/') && !method_path.is_empty() {
+            full_path.push('/');
+        }
+        full_path.push_str(method_path);
+        
+        Some(HttpAnnotation {
+            method: method_http.method,
+            path: full_path,
+            path_params: method_http.path_params,
+        })
+    }
+    
     /// 从类节点中提取方法（包括接口中的抽象方法）
     fn extract_methods_from_class(
         &self,
@@ -122,6 +244,7 @@ impl JavaParser {
         class_node: &tree_sitter::Node,
         class_name: &str,
         tree: &tree_sitter::Tree,
+        feign_client_info: &Option<FeignClientInfo>,
     ) -> Vec<MethodInfo> {
         let mut methods = Vec::new();
         
@@ -133,7 +256,7 @@ impl JavaParser {
                 for body_child in child.children(&mut body_cursor) {
                     // 处理普通方法声明和接口方法声明
                     if body_child.kind() == "method_declaration" {
-                        if let Some(method_info) = self.extract_method_info(source, file_path, body_child, class_name, tree) {
+                        if let Some(method_info) = self.extract_method_info(source, file_path, body_child, class_name, tree, feign_client_info) {
                             methods.push(method_info);
                         }
                     }
@@ -152,6 +275,7 @@ impl JavaParser {
         method_node: tree_sitter::Node,
         class_name: &str,
         tree: &tree_sitter::Tree,
+        feign_client_info: &Option<FeignClientInfo>,
     ) -> Option<MethodInfo> {
         // 查找方法名
         let mut cursor = method_node.walk();
@@ -174,8 +298,12 @@ impl JavaParser {
         // 提取方法调用
         let calls = self.extract_method_calls(source, &method_node, tree);
         
-        // 提取 HTTP 注解
-        let http_annotations = self.extract_http_annotations(source, &method_node);
+        // 提取 HTTP 注解（如果是 FeignClient，需要组合类级别和方法级别的注解）
+        let http_annotations = if let Some(feign_info) = feign_client_info {
+            self.extract_feign_http_annotation(source, &method_node, feign_info)
+        } else {
+            self.extract_http_annotations(source, &method_node)
+        };
         
         // 提取 Kafka 操作
         let kafka_operations = self.extract_kafka_operations(source, &method_node);
@@ -1038,5 +1166,95 @@ mod tests {
         assert!(call_names.contains(&"save"), "Should find save");
         assert!(call_names.contains(&"println") || call_names.contains(&"System::println"), "Should find println");
         assert!(call_names.contains(&"updateUser") || call_names.contains(&"UserService::updateUser"), "Should find updateUser");
+    }
+    
+    #[test]
+    fn test_extract_feign_client_annotation() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+            package com.hualala.shop.domain.feign;
+            
+            import org.springframework.cloud.openfeign.FeignClient;
+            import org.springframework.web.bind.annotation.PostMapping;
+            import org.springframework.web.bind.annotation.RequestBody;
+            
+            @FeignClient(value = "hll-basic-info-api", path = "/hll-basic-info-api")
+            public interface BasicInfoFeign {
+                @PostMapping("/feign/shop/copy/info")
+                GoodsResponse getGoodsInfo(@RequestBody GoodsInfoRequest request);
+            }
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("BasicInfoFeign.java")).unwrap();
+        assert_eq!(result.classes.len(), 1);
+        assert_eq!(result.classes[0].name, "com.hualala.shop.domain.feign.BasicInfoFeign");
+        assert_eq!(result.classes[0].methods.len(), 1);
+        
+        let method = &result.classes[0].methods[0];
+        assert_eq!(method.name, "getGoodsInfo");
+        assert!(method.http_annotations.is_some(), "HTTP annotation should be present");
+        
+        let http = method.http_annotations.as_ref().unwrap();
+        assert_eq!(http.method, HttpMethod::POST);
+        // 应该组合为：service_name/base_path/method_path
+        assert_eq!(http.path, "hll-basic-info-api/hll-basic-info-api/feign/shop/copy/info");
+    }
+    
+    #[test]
+    fn test_extract_feign_client_without_base_path() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+            package com.example;
+            
+            import org.springframework.cloud.openfeign.FeignClient;
+            import org.springframework.web.bind.annotation.GetMapping;
+            
+            @FeignClient(value = "user-service")
+            public interface UserClient {
+                @GetMapping("/api/users")
+                User getUser();
+            }
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("UserClient.java")).unwrap();
+        assert_eq!(result.classes.len(), 1);
+        assert_eq!(result.classes[0].methods.len(), 1);
+        
+        let method = &result.classes[0].methods[0];
+        assert!(method.http_annotations.is_some());
+        
+        let http = method.http_annotations.as_ref().unwrap();
+        assert_eq!(http.method, HttpMethod::GET);
+        // 没有 base_path 时，应该是：service_name/method_path
+        assert_eq!(http.path, "user-service/api/users");
+    }
+    
+    #[test]
+    fn test_extract_feign_client_with_name_attribute() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+            package com.example;
+            
+            import org.springframework.cloud.openfeign.FeignClient;
+            import org.springframework.web.bind.annotation.PutMapping;
+            
+            @FeignClient(name = "order-service", path = "/orders")
+            public interface OrderClient {
+                @PutMapping("/update")
+                void updateOrder();
+            }
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("OrderClient.java")).unwrap();
+        assert_eq!(result.classes.len(), 1);
+        assert_eq!(result.classes[0].methods.len(), 1);
+        
+        let method = &result.classes[0].methods[0];
+        assert!(method.http_annotations.is_some());
+        
+        let http = method.http_annotations.as_ref().unwrap();
+        assert_eq!(http.method, HttpMethod::PUT);
+        // 使用 name 属性时，应该正常工作
+        assert_eq!(http.path, "order-service/orders/update");
     }
 }

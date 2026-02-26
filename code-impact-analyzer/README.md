@@ -327,7 +327,9 @@ index 1234567..abcdefg 100644
 ### Java
 
 - **HTTP 框架**: Spring Boot (`@RestController`, `@GetMapping`, `@PostMapping` 等)
-- **HTTP 客户端**: `RestTemplate`, `HttpClient`, `WebClient`
+- **HTTP 客户端**: 
+  - `RestTemplate`, `HttpClient`, `WebClient`
+  - **Spring Cloud OpenFeign**: `@FeignClient` 注解支持，自动组合服务名称、基础路径和方法路径
 - **Kafka**: `KafkaProducer`, `KafkaTemplate`, `@KafkaListener`
 - **数据库**: JPA (`@Entity`, `@Table`), JDBC, MyBatis
 - **Redis**: `RedisTemplate`
@@ -339,6 +341,38 @@ index 1234567..abcdefg 100644
 - **Kafka**: `rdkafka` (`FutureProducer`, `StreamConsumer`)
 - **数据库**: Diesel ORM, `sqlx`
 - **Redis**: `redis` crate (`Commands` trait)
+
+## FeignClient 支持
+
+工具现在完整支持 Spring Cloud OpenFeign 的 `@FeignClient` 注解，能够自动识别和追踪微服务间的 HTTP 调用。
+
+### 功能说明
+
+对于使用 `@FeignClient` 注解的接口，解析器会：
+
+1. 提取类级别的服务名称（`value` 或 `name` 属性）和基础路径（`path` 属性）
+2. 提取方法级别的 HTTP 映射注解（`@GetMapping`, `@PostMapping` 等）
+3. 自动组合完整的下游接口路径：`{service_name}/{base_path}/{method_path}`
+
+### 示例
+
+```java
+@FeignClient(value = "hll-basic-info-api", path = "/hll-basic-info-api")
+public interface BasicInfoFeign {
+    @PostMapping("/feign/shop/copy/info")
+    GoodsResponse getGoodsInfo(@RequestBody GoodsInfoRequest request);
+}
+```
+
+解析结果：
+- HTTP 接口：`POST hll-basic-info-api/hll-basic-info-api/feign/shop/copy/info`
+
+这使得工具能够：
+- 追踪跨服务的调用链路
+- 识别 Feign 客户端调用的下游服务
+- 在影响分析中包含微服务间的依赖关系
+
+详细文档请参考：[FEIGN_CLIENT_SUPPORT.md](FEIGN_CLIENT_SUPPORT.md)
 
 ## 配置文件支持
 

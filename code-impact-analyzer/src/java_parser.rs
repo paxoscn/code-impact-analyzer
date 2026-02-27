@@ -706,13 +706,39 @@ impl JavaParser {
             // 查找方法调用的对象和方法名
             let mut cursor = node.walk();
             let mut identifiers = Vec::new();
+            let mut scoped_identifiers = Vec::new();
             
             for child in node.children(&mut cursor) {
                 if child.kind() == "identifier" {
                     if let Some(text) = source.get(child.byte_range()) {
                         identifiers.push(text.to_string());
                     }
+                } else if child.kind() == "scoped_identifier" {
+                    // 处理静态方法调用，如 ClassName.staticMethod()
+                    if let Some(text) = source.get(child.byte_range()) {
+                        scoped_identifiers.push(text.to_string());
+                    }
                 }
+            }
+            
+            let line = node.start_position().row + 1;
+            
+            // 处理静态方法调用：ClassName.staticMethod() 或 package.ClassName.staticMethod()
+            if !scoped_identifiers.is_empty() && !identifiers.is_empty() {
+                // scoped_identifier 包含类名（可能带包名），identifier 是方法名
+                let class_name = &scoped_identifiers[0];
+                let method_name = &identifiers[identifiers.len() - 1];
+                
+                // 尝试将简单类名转换为完整类名
+                let full_class_name = import_map.get(class_name)
+                    .unwrap_or(class_name);
+                
+                let target = format!("{}::{}", full_class_name, method_name);
+                calls.push(MethodCall {
+                    target,
+                    line,
+                });
+                return;
             }
             
             // 对于 obj.method() 形式，有两个 identifier：对象名和方法名
@@ -725,8 +751,6 @@ impl JavaParser {
                 return;
             };
             
-            let line = node.start_position().row + 1;
-            
             // 如果有对象名，尝试解析为完整的类名::方法名
             let target = if let Some(obj) = object_name {
                 if let Some(class_type) = field_types.get(&obj) {
@@ -735,7 +759,12 @@ impl JavaParser {
                         .unwrap_or(class_type);
                     format!("{}::{}", full_class_name, method_name)
                 } else {
-                    method_name.clone()
+                    // 可能是静态方法调用，尝试从 import_map 中查找
+                    if let Some(full_class_name) = import_map.get(&obj) {
+                        format!("{}::{}", full_class_name, method_name)
+                    } else {
+                        method_name.clone()
+                    }
                 }
             } else {
                 method_name.clone()
@@ -1533,6 +1562,60 @@ mod tests {
         assert_eq!(http.method, HttpMethod::GET);
         // 没有 base_path 时，应该是：service_name/method_path
         assert_eq!(http.path, "user-service/api/users");
+    }
+    
+    #[test]
+    fn test_extract_static_method_calls() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+            package com.example;
+            
+            import org.apache.commons.lang3.StringUtils;
+            import java.util.Collections;
+            
+            public class TestStaticMethod {
+                private UserService userService;
+                
+                public void testMethod() {
+                    // 静态方法调用 - 使用导入的类
+                    String result1 = StringUtils.isEmpty("test");
+                    
+                    // 静态方法调用 - 使用导入的类
+                    List<String> list = Collections.emptyList();
+                    
+                    // 实例方法调用
+                    userService.findUser();
+                    
+                    // 链式调用
+                    Collections.emptyList().stream().filter(x -> x != null);
+                }
+            }
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("TestStaticMethod.java")).unwrap();
+        assert_eq!(result.classes.len(), 1);
+        assert_eq!(result.classes[0].methods.len(), 1);
+        
+        let method = &result.classes[0].methods[0];
+        let call_targets: Vec<&str> = method.calls.iter()
+            .map(|c| c.target.as_str())
+            .collect();
+        
+        // 验证静态方法调用被正确识别为 ClassName::methodName
+        assert!(
+            call_targets.contains(&"org.apache.commons.lang3.StringUtils::isEmpty"),
+            "Should find StringUtils::isEmpty, got: {:?}", call_targets
+        );
+        assert!(
+            call_targets.iter().any(|t| t.contains("Collections::emptyList")),
+            "Should find Collections::emptyList, got: {:?}", call_targets
+        );
+        
+        // 验证实例方法调用仍然正常工作
+        assert!(
+            call_targets.contains(&"UserService::findUser"),
+            "Should find UserService::findUser, got: {:?}", call_targets
+        );
     }
     
     #[test]

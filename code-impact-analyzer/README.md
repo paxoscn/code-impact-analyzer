@@ -63,6 +63,8 @@ cargo run -- --workspace /Users/lindagao/Workspace/javadiff/examples/single-call
 cargo run -- --workspace /Users/lindagao/Workspace/javadiff/examples/added-one-line --diff /Users/lindagao/Workspace/javadiff/examples/added-one-line/patches
 cargo run -- --workspace /Users/lindagao/Workspace/javadiff/examples/removed-one-line --diff /Users/lindagao/Workspace/javadiff/examples/removed-one-line/patches
 cargo run -- --workspace /Users/lindagao/Workspace/test/ws --diff /Users/lindagao/Workspace/javadiff/examples/single-call/patches
+
+cargo run -- --workspace /Users/lindagao/Workspace/ws-md-gm-horizontal-alliances --diff /Users/lindagao/Workspace/ws-md-gm-horizontal-alliances
 ```
 
 ### 命令行参数

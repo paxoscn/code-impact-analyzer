@@ -61,8 +61,13 @@ impl PatchParser {
             message: format!("Failed to read patch file: {}", e),
         })?;
 
+        // 预处理 patch 内容：移除 "-- " 分隔符后面的所有内容
+        // git format-patch 生成的文件会在最后添加 "-- " 和版本号等信息
+        // 这些内容会导致 gitpatch crate panic
+        let cleaned_content = Self::remove_trailing_content(&content);
+
         // 使用 gitpatch crate 解析多个 patch
-        let patches = gitpatch::Patch::from_multiple(&content).map_err(|e| ParseError::InvalidFormat {
+        let patches = gitpatch::Patch::from_multiple(&cleaned_content).map_err(|e| ParseError::InvalidFormat {
             message: format!("Failed to parse patch: {}", e),
         })?;
 
@@ -131,6 +136,45 @@ impl PatchParser {
         }
 
         Ok(file_changes)
+    }
+
+    /// 移除 patch 内容中 "-- " 分隔符后面的所有内容
+    /// 
+    /// git format-patch 生成的文件会在最后添加 "-- " 分隔符和版本号等信息，
+    /// 这些内容会导致 gitpatch crate panic。
+    /// 
+    /// # 参数
+    /// * `content` - 原始 patch 内容
+    /// 
+    /// # 返回
+    /// * 清理后的 patch 内容
+    fn remove_trailing_content(content: &str) -> String {
+        let mut result = String::new();
+        let mut lines = content.lines().peekable();
+        
+        while let Some(line) = lines.next() {
+            // 检查是否是 "-- " 分隔符（注意后面有空格或者是行尾）
+            if line == "--" || line.starts_with("-- ") {
+                // 找到分隔符，停止处理
+                // 但保留这一行，因为它可能是 patch 格式的一部分
+                result.push_str(line);
+                result.push('\n');
+                
+                // 检查下一行是否为空或者是版本号等信息
+                if let Some(next_line) = lines.peek() {
+                    // 如果下一行不是空行，说明后面有额外内容，需要截断
+                    if !next_line.trim().is_empty() {
+                        log::debug!("Removing trailing content after '-- ' separator");
+                        break;
+                    }
+                }
+            } else {
+                result.push_str(line);
+                result.push('\n');
+            }
+        }
+        
+        result
     }
 
     /// 从文件变更中提取被修改的方法
@@ -347,5 +391,143 @@ index 1234567..abcdefg 100644
         assert_eq!(hunk.lines[1].line_type, LineType::Removed);
         assert_eq!(hunk.lines[2].line_type, LineType::Added);
         assert_eq!(hunk.lines[3].line_type, LineType::Context);
+    }
+
+    #[test]
+    fn test_parse_patch_with_trailing_content() {
+        // 测试 patch 文件在 -- 后面还有内容的情况（如 git format-patch 生成的文件）
+        let patch_content = r#"From 7de8e2bd4da14f2744ee7baa83d5fa86dc065700 Mon Sep 17 00:00:00 2001
+From: Test User <test@example.com>
+Date: Mon, 3 Jun 2024 15:46:03 +0800
+Subject: [PATCH] Test patch
+
+---
+ test.txt | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/test.txt b/test.txt
+index 1234567..abcdefg 100644
+--- a/test.txt
++++ b/test.txt
+@@ -1,3 +1,4 @@
+ line 1
++line 2
+ line 3
+-- 
+
+
+"#;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(patch_content.as_bytes()).unwrap();
+        
+        let result = PatchParser::parse_patch_file(temp_file.path());
+        assert!(result.is_ok(), "Should parse patch with trailing content after --");
+        
+        let changes = result.unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].file_path, "test.txt");
+        assert_eq!(changes[0].change_type, ChangeType::Modified);
+    }
+
+    #[test]
+    fn test_parse_patch_with_version_line_after_separator() {
+        // 测试 patch 文件在 -- 后面有版本号的情况
+        let patch_content = r#"diff --git a/test.txt b/test.txt
+index 1234567..abcdefg 100644
+--- a/test.txt
++++ b/test.txt
+@@ -1,3 +1,4 @@
+ line 1
++line 2
+ line 3
+-- 
+2.39.0
+
+"#;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(patch_content.as_bytes()).unwrap();
+        
+        let result = PatchParser::parse_patch_file(temp_file.path());
+        assert!(result.is_ok(), "Should parse patch with version line after --");
+        
+        let changes = result.unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].file_path, "test.txt");
+    }
+
+    #[test]
+    fn test_parse_patch_with_multiple_trailing_lines() {
+        // 测试 patch 文件在 -- 后面有多行内容的情况
+        let patch_content = r#"diff --git a/test.txt b/test.txt
+index 1234567..abcdefg 100644
+--- a/test.txt
++++ b/test.txt
+@@ -1,3 +1,4 @@
+ line 1
++line 2
+ line 3
+-- 
+Some random text
+Another line
+2.39.0
+"#;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(patch_content.as_bytes()).unwrap();
+        
+        let result = PatchParser::parse_patch_file(temp_file.path());
+        assert!(result.is_ok(), "Should parse patch with multiple trailing lines after --");
+        
+        let changes = result.unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].file_path, "test.txt");
+    }
+
+    #[test]
+    fn test_remove_trailing_content() {
+        // 测试移除尾部内容的功能
+        let content = "diff --git a/test.txt b/test.txt\n\
+                       --- a/test.txt\n\
+                       +++ b/test.txt\n\
+                       @@ -1,1 +1,2 @@\n\
+                       +line 1\n\
+                       -- \n\
+                       2.39.0\n";
+        
+        let cleaned = PatchParser::remove_trailing_content(content);
+        assert!(!cleaned.contains("2.39.0"), "Should remove version number after --");
+        assert!(cleaned.contains("-- "), "Should keep the -- separator line");
+    }
+
+    #[test]
+    fn test_remove_trailing_content_with_empty_line() {
+        // 测试 -- 后面只有空行的情况（应该保留）
+        let content = "diff --git a/test.txt b/test.txt\n\
+                       --- a/test.txt\n\
+                       +++ b/test.txt\n\
+                       @@ -1,1 +1,2 @@\n\
+                       +line 1\n\
+                       -- \n\
+                       \n\
+                       \n";
+        
+        let cleaned = PatchParser::remove_trailing_content(content);
+        assert!(cleaned.contains("-- "), "Should keep the -- separator line");
+        // 空行应该被保留
+    }
+
+    #[test]
+    fn test_remove_trailing_content_no_separator() {
+        // 测试没有 -- 分隔符的情况
+        let content = "diff --git a/test.txt b/test.txt\n\
+                       --- a/test.txt\n\
+                       +++ b/test.txt\n\
+                       @@ -1,1 +1,2 @@\n\
+                       +line 1\n";
+        
+        let cleaned = PatchParser::remove_trailing_content(content);
+        assert_eq!(cleaned, format!("{}\n", content.trim_end()), "Should keep content unchanged");
     }
 }

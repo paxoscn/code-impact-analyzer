@@ -513,17 +513,21 @@ impl<'a> ImpactTracer<'a> {
         let callers = self.index.find_callers(method);
         
         for caller in callers {
+            // 解析接口调用：如果调用者调用的是接口方法，且接口只有一个实现类，
+            // 则将调用目标替换为实现类的方法
+            let resolved_caller = self.index.resolve_interface_call(caller);
+            
             // 检查调用者是否在索引中（忽略外部库）
-            if self.index.find_method(caller).is_none() {
+            if self.index.find_method(&resolved_caller).is_none() {
                 continue;
             }
             
             // 添加调用者节点
-            let caller_node = ImpactNode::method(caller.to_string());
+            let caller_node = ImpactNode::method(resolved_caller.clone());
             graph.add_node(caller_node);
             
             // 构建节点 ID
-            let caller_id = format!("method:{}", caller);
+            let caller_id = format!("method:{}", resolved_caller);
             let method_id = format!("method:{}", method);
             
             // 添加边：caller -> method
@@ -535,7 +539,7 @@ impl<'a> ImpactTracer<'a> {
             );
             
             // 递归追溯上游
-            self.trace_method_upstream(caller, depth + 1, visited, graph);
+            self.trace_method_upstream(&resolved_caller, depth + 1, visited, graph);
         }
         
         // 跨服务追溯（上游方向）
@@ -574,18 +578,22 @@ impl<'a> ImpactTracer<'a> {
         let callees = self.index.find_callees(method);
         
         for callee in callees {
+            // 解析接口调用：如果被调用的是接口方法，且接口只有一个实现类，
+            // 则将调用目标替换为实现类的方法
+            let resolved_callee = self.index.resolve_interface_call(callee);
+            
             // 检查被调用者是否在索引中（忽略外部库）
-            if self.index.find_method(callee).is_none() {
+            if self.index.find_method(&resolved_callee).is_none() {
                 continue;
             }
             
             // 添加被调用者节点
-            let callee_node = ImpactNode::method(callee.to_string());
+            let callee_node = ImpactNode::method(resolved_callee.clone());
             graph.add_node(callee_node);
             
             // 构建节点 ID
             let method_id = format!("method:{}", method);
-            let callee_id = format!("method:{}", callee);
+            let callee_id = format!("method:{}", resolved_callee);
             
             // 添加边：method -> callee
             graph.add_edge(
@@ -596,7 +604,7 @@ impl<'a> ImpactTracer<'a> {
             );
             
             // 递归追溯下游
-            self.trace_method_downstream(callee, depth + 1, visited, graph);
+            self.trace_method_downstream(&resolved_callee, depth + 1, visited, graph);
         }
         
         // 跨服务追溯

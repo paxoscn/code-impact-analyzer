@@ -106,6 +106,8 @@ mod tests {
                         },
                     ],
                     line_range: (5, 25),
+                    is_interface: false,
+                    implements: vec![],
                 },
             ],
             functions: vec![],

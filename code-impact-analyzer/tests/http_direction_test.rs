@@ -98,7 +98,6 @@ fn test_feign_client_with_base_path() {
             method: HttpMethod::POST,
             path: "hll-basic-info-api/hll-basic-info-api/feign/shop/copy/info".to_string(),
             path_params: vec![],
-            is_feign_client: false,
             is_feign_client: true,  // Feign 调用
         }),
         kafka_operations: vec![],
@@ -153,7 +152,6 @@ fn test_http_provider_and_consumer_different_endpoints() {
             method: HttpMethod::GET,
             path: "order-service/api/orders".to_string(),
             path_params: vec![],
-            is_feign_client: false,
             is_feign_client: true,  // Feign 调用
         }),
         kafka_operations: vec![],

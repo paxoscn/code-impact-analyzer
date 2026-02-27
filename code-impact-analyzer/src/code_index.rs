@@ -48,6 +48,9 @@ pub struct CodeIndex {
     /// 配置关联映射: 配置值 -> 使用该配置的方法列表
     /// 用于追踪从配置文件中读取的值在代码中的使用
     config_associations: HashMap<String, Vec<String>>,
+    
+    /// 接口到实现类的映射: interface_name -> [implementation_class_names]
+    interface_implementations: HashMap<String, Vec<String>>,
 }
 
 impl CodeIndex {
@@ -66,6 +69,7 @@ impl CodeIndex {
             redis_writers: HashMap::new(),
             redis_readers: HashMap::new(),
             config_associations: HashMap::new(),
+            interface_implementations: HashMap::new(),
         }
     }
     
@@ -213,6 +217,16 @@ impl CodeIndex {
     fn index_parsed_file(&mut self, parsed_file: ParsedFile) -> Result<(), IndexError> {
         // 索引类中的方法
         for class in &parsed_file.classes {
+            // 索引接口实现关系
+            if !class.implements.is_empty() {
+                for interface_name in &class.implements {
+                    self.interface_implementations
+                        .entry(interface_name.clone())
+                        .or_insert_with(Vec::new)
+                        .push(class.name.clone());
+                }
+            }
+            
             for method in &class.methods {
                 self.index_method(method)?;
             }
@@ -698,12 +712,61 @@ impl CodeIndex {
             .unwrap_or_default()
     }
     
+    /// 查找接口的所有实现类
+    /// 
+    /// # Arguments
+    /// * `interface_name` - 接口的完整类名
+    /// 
+    /// # Returns
+    /// 实现该接口的所有类的完整类名列表
+    pub fn find_interface_implementations(&self, interface_name: &str) -> Vec<&str> {
+        self.interface_implementations
+            .get(interface_name)
+            .map(|impls| impls.iter().map(|s| s.as_str()).collect())
+            .unwrap_or_default()
+    }
+    
+    /// 解析方法调用目标，如果是接口且只有一个实现类，则返回实现类的方法
+    /// 
+    /// # Arguments
+    /// * `method_call_target` - 方法调用目标（格式：ClassName::methodName）
+    /// 
+    /// # Returns
+    /// 解析后的方法调用目标（如果接口只有一个实现类，返回实现类的方法；否则返回原始目标）
+    pub fn resolve_interface_call(&self, method_call_target: &str) -> String {
+        // 解析方法调用目标：ClassName::methodName
+        if let Some(pos) = method_call_target.rfind("::") {
+            let class_name = &method_call_target[..pos];
+            let method_name = &method_call_target[pos + 2..];
+            
+            // 查找该类是否是接口，以及是否只有一个实现类
+            let implementations = self.find_interface_implementations(class_name);
+            
+            if implementations.len() == 1 {
+                // 只有一个实现类，用实现类替换接口
+                let impl_class = implementations[0];
+                return format!("{}::{}", impl_class, method_name);
+            }
+        }
+        
+        // 否则返回原始目标
+        method_call_target.to_string()
+    }
+    
     /// 测试辅助方法：直接索引方法
     /// 
     /// 注意：此方法仅用于测试目的，不应在生产代码中使用
     #[doc(hidden)]
     pub fn test_index_method(&mut self, method: &MethodInfo) -> Result<(), IndexError> {
         self.index_method(method)
+    }
+    
+    /// 测试辅助方法：索引解析后的文件
+    /// 
+    /// 注意：此方法仅用于测试目的，不应在生产代码中使用
+    #[doc(hidden)]
+    pub fn test_index_parsed_file(&mut self, parsed_file: ParsedFile) -> Result<(), IndexError> {
+        self.index_parsed_file(parsed_file)
     }
 }
 

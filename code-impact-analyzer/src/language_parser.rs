@@ -33,6 +33,10 @@ pub struct ClassInfo {
     pub name: String,
     pub methods: Vec<MethodInfo>,
     pub line_range: (usize, usize),
+    /// 是否是接口
+    pub is_interface: bool,
+    /// 实现的接口列表（完整类名）
+    pub implements: Vec<String>,
 }
 
 /// 方法信息

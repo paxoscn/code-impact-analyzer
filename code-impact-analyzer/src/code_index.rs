@@ -51,6 +51,9 @@ pub struct CodeIndex {
     
     /// 接口到实现类的映射: interface_name -> [implementation_class_names]
     interface_implementations: HashMap<String, Vec<String>>,
+    
+    /// 实现类到接口的映射: implementation_class_name -> [interface_names]
+    class_interfaces: HashMap<String, Vec<String>>,
 }
 
 impl CodeIndex {
@@ -70,6 +73,7 @@ impl CodeIndex {
             redis_readers: HashMap::new(),
             config_associations: HashMap::new(),
             interface_implementations: HashMap::new(),
+            class_interfaces: HashMap::new(),
         }
     }
     
@@ -220,10 +224,17 @@ impl CodeIndex {
             // 索引接口实现关系
             if !class.implements.is_empty() {
                 for interface_name in &class.implements {
+                    // 正向映射：接口 -> 实现类
                     self.interface_implementations
                         .entry(interface_name.clone())
                         .or_insert_with(Vec::new)
                         .push(class.name.clone());
+                    
+                    // 反向映射：实现类 -> 接口
+                    self.class_interfaces
+                        .entry(class.name.clone())
+                        .or_insert_with(Vec::new)
+                        .push(interface_name.clone());
                 }
             }
             
@@ -723,6 +734,20 @@ impl CodeIndex {
         self.interface_implementations
             .get(interface_name)
             .map(|impls| impls.iter().map(|s| s.as_str()).collect())
+            .unwrap_or_default()
+    }
+    
+    /// 查找类实现的所有接口
+    /// 
+    /// # Arguments
+    /// * `class_name` - 类的完整类名
+    /// 
+    /// # Returns
+    /// 该类实现的所有接口的完整类名列表
+    pub fn find_class_interfaces(&self, class_name: &str) -> Vec<&str> {
+        self.class_interfaces
+            .get(class_name)
+            .map(|interfaces| interfaces.iter().map(|s| s.as_str()).collect())
             .unwrap_or_default()
     }
     

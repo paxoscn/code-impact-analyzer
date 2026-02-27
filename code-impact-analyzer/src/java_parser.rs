@@ -817,9 +817,6 @@ impl JavaParser {
                 method_name.clone()
             };
             
-            if target.contains("doSendCouponTemplate") {
-                println!("target = {}", target);
-            }
             calls.push(MethodCall {
                 target,
                 line,

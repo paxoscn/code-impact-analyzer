@@ -510,9 +510,33 @@ impl<'a> ImpactTracer<'a> {
         visited.insert(method.to_string());
         
         // 查找所有调用当前方法的方法（上游）
-        let callers = self.index.find_callers(method);
+        let mut all_callers = self.index.find_callers(method);
         
-        for caller in callers {
+        // 查找该方法所在类实现的所有接口中的同名方法的调用者
+        if let Some(pos) = method.rfind("::") {
+            let class_name = &method[..pos];
+            let method_name = &method[pos + 2..];
+            
+            // 获取该类实现的所有接口
+            let interfaces = self.index.find_class_interfaces(class_name);
+            
+            for interface_name in interfaces {
+                // 构建接口方法的完整限定名
+                let interface_method = format!("{}::{}", interface_name, method_name);
+                
+                // 查找调用接口方法的调用者
+                let interface_callers = self.index.find_callers(&interface_method);
+                
+                // 合并到总的调用者列表中
+                all_callers.extend(interface_callers);
+            }
+        }
+        
+        if method.contains("sendCoupon") {
+            println!("method = {}, all_callers = {:?}", method, all_callers);
+        }
+        
+        for caller in all_callers {
             // 解析接口调用：如果调用者调用的是接口方法，且接口只有一个实现类，
             // 则将调用目标替换为实现类的方法
             let resolved_caller = self.index.resolve_interface_call(caller);

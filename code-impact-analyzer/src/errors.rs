@@ -73,6 +73,7 @@ pub enum IndexError {
     IoError { path: PathBuf, error: String },
     UnsupportedLanguage { file: PathBuf },
     ParseError { file: PathBuf, error: String },
+    SerializationError { message: String },
 }
 
 impl fmt::Display for IndexError {
@@ -90,6 +91,9 @@ impl fmt::Display for IndexError {
             }
             IndexError::ParseError { file, error } => {
                 write!(f, "Parse error for {:?}: {}", file, error)
+            }
+            IndexError::SerializationError { message } => {
+                write!(f, "Serialization error: {}", message)
             }
         }
     }

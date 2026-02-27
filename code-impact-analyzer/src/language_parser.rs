@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use crate::errors::ParseError;
 use crate::types::*;
+use serde::{Deserialize, Serialize};
 
 /// 语言解析器 trait
 /// 
@@ -17,7 +18,7 @@ pub trait LanguageParser: Send + Sync {
 }
 
 /// 解析后的文件信息
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedFile {
     pub file_path: PathBuf,
     pub language: String,
@@ -27,7 +28,7 @@ pub struct ParsedFile {
 }
 
 /// 类信息
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClassInfo {
     pub name: String,
     pub methods: Vec<MethodInfo>,
@@ -35,7 +36,7 @@ pub struct ClassInfo {
 }
 
 /// 方法信息
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MethodInfo {
     pub name: String,
     pub full_qualified_name: String,
@@ -49,7 +50,7 @@ pub struct MethodInfo {
 }
 
 /// 函数信息（用于非面向对象语言如 Rust）
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionInfo {
     pub name: String,
     pub full_qualified_name: String,
@@ -63,7 +64,7 @@ pub struct FunctionInfo {
 }
 
 /// 方法调用信息
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MethodCall {
     pub target: String,
     pub line: usize,

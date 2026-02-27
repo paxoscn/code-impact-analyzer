@@ -26,6 +26,22 @@ pub struct CliArgs {
     /// 日志级别：trace, debug, info, warn, error
     #[arg(short = 'l', long = "log-level", value_enum, default_value = "info")]
     pub log_level: LogLevel,
+    
+    /// 强制重建索引，忽略缓存
+    #[arg(long = "rebuild-index")]
+    pub rebuild_index: bool,
+    
+    /// 清除索引缓存并退出
+    #[arg(long = "clear-index")]
+    pub clear_index: bool,
+    
+    /// 显示索引信息并退出
+    #[arg(long = "index-info")]
+    pub index_info: bool,
+    
+    /// 验证索引有效性并退出
+    #[arg(long = "verify-index")]
+    pub verify_index: bool,
 }
 
 /// 输出格式枚举

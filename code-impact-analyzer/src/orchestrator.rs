@@ -8,6 +8,7 @@ use crate::language_parser::LanguageParser;
 use crate::java_parser::JavaParser;
 use crate::rust_parser::RustParser;
 use crate::config_parser::{ConfigParser, XmlConfigParser, YamlConfigParser};
+use crate::index_storage::IndexStorage;
 
 /// 分析统计信息
 #[derive(Debug, Clone)]
@@ -71,10 +72,14 @@ pub struct AnalysisOrchestrator {
     parsers: Vec<Box<dyn LanguageParser>>,
     /// 配置解析器列表
     config_parsers: Vec<Box<dyn ConfigParser>>,
+    /// 索引存储管理器
+    index_storage: IndexStorage,
     /// 警告列表
     warnings: Vec<String>,
     /// 错误列表
     errors: Vec<String>,
+    /// 是否强制重建索引
+    force_rebuild: bool,
 }
 
 impl AnalysisOrchestrator {
@@ -112,14 +117,24 @@ impl AnalysisOrchestrator {
             Box::new(YamlConfigParser),
         ];
         
+        // 初始化索引存储管理器
+        let index_storage = IndexStorage::new(workspace_path.clone());
+        
         Ok(Self {
             workspace_path,
             trace_config,
             parsers,
             config_parsers,
+            index_storage,
             warnings: Vec::new(),
             errors: Vec::new(),
+            force_rebuild: false,
         })
+    }
+    
+    /// 设置是否强制重建索引
+    pub fn set_force_rebuild(&mut self, force: bool) {
+        self.force_rebuild = force;
     }
     
     /// 执行完整的分析流程
@@ -301,6 +316,31 @@ impl AnalysisOrchestrator {
     
     /// 构建代码索引
     fn build_index(&mut self) -> Result<CodeIndex, AnalysisError> {
+        // 如果强制重建，清除现有索引
+        if self.force_rebuild {
+            log::info!("Force rebuild enabled, clearing existing index");
+            if let Err(e) = self.index_storage.clear_index() {
+                log::warn!("Failed to clear index: {}", e);
+            }
+        }
+        
+        // 尝试加载现有索引
+        if !self.force_rebuild {
+            match self.index_storage.load_index() {
+                Ok(Some(index)) => {
+                    log::info!("Loaded existing index from cache");
+                    return Ok(index);
+                }
+                Ok(None) => {
+                    log::info!("No valid index found, building new index");
+                }
+                Err(e) => {
+                    log::warn!("Failed to load index: {}, will rebuild", e);
+                }
+            }
+        }
+        
+        // 构建新索引
         let mut index = CodeIndex::new();
         
         match index.index_workspace(&self.workspace_path, &self.parsers) {
@@ -309,6 +349,12 @@ impl AnalysisOrchestrator {
                 
                 // 解析配置文件并关联到代码
                 self.parse_and_associate_configs(&mut index);
+                
+                // 保存索引到磁盘
+                if let Err(e) = self.index_storage.save_index(&index) {
+                    log::warn!("Failed to save index: {}", e);
+                    // 不中断流程，继续使用内存中的索引
+                }
                 
                 Ok(index)
             }

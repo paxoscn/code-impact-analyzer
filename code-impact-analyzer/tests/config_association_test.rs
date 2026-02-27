@@ -16,12 +16,13 @@ fn test_http_endpoint_config_association() {
     let provider = MethodInfo {
         name: "getUserById".to_string(),
         full_qualified_name: "com.example.api.UserController::getUserById".to_string(),
-        line_range: (10, 25),
+        file_path: std::path::PathBuf::from("test.java"),        line_range: (10, 25),
         calls: vec![],
         http_annotations: Some(HttpAnnotation {
             method: HttpMethod::GET,
             path: "/api/v1/users/{id}".to_string(),
             path_params: vec!["id".to_string()],
+            is_feign_client: false,
         }),
         kafka_operations: vec![],
         db_operations: vec![],
@@ -32,7 +33,7 @@ fn test_http_endpoint_config_association() {
     let consumer = MethodInfo {
         name: "fetchUserData".to_string(),
         full_qualified_name: "com.example.client.UserClient::fetchUserData".to_string(),
-        line_range: (30, 45),
+        file_path: std::path::PathBuf::from("test.java"),        line_range: (30, 45),
         calls: vec![
             MethodCall {
                 target: "RestTemplate.getForObject(/api/v1/users)".to_string(),
@@ -90,7 +91,7 @@ fn test_kafka_topic_config_association() {
     let producer = MethodInfo {
         name: "publishUserEvent".to_string(),
         full_qualified_name: "com.example.events.UserEventPublisher::publishUserEvent".to_string(),
-        line_range: (10, 25),
+        file_path: std::path::PathBuf::from("test.java"),        line_range: (10, 25),
         calls: vec![],
         http_annotations: None,
         kafka_operations: vec![
@@ -108,7 +109,7 @@ fn test_kafka_topic_config_association() {
     let consumer = MethodInfo {
         name: "handleUserEvent".to_string(),
         full_qualified_name: "com.example.handlers.UserEventHandler::handleUserEvent".to_string(),
-        line_range: (30, 50),
+        file_path: std::path::PathBuf::from("test.java"),        line_range: (30, 50),
         calls: vec![],
         http_annotations: None,
         kafka_operations: vec![
@@ -156,7 +157,7 @@ fn test_database_table_config_association() {
     let reader = MethodInfo {
         name: "findUserById".to_string(),
         full_qualified_name: "com.example.repository.UserRepository::findUserById".to_string(),
-        line_range: (10, 20),
+        file_path: std::path::PathBuf::from("test.java"),        line_range: (10, 20),
         calls: vec![],
         http_annotations: None,
         kafka_operations: vec![],
@@ -174,7 +175,7 @@ fn test_database_table_config_association() {
     let writer = MethodInfo {
         name: "saveUser".to_string(),
         full_qualified_name: "com.example.repository.UserRepository::saveUser".to_string(),
-        line_range: (25, 35),
+        file_path: std::path::PathBuf::from("test.java"),        line_range: (25, 35),
         calls: vec![],
         http_annotations: None,
         kafka_operations: vec![],
@@ -191,7 +192,7 @@ fn test_database_table_config_association() {
     let updater = MethodInfo {
         name: "updateUser".to_string(),
         full_qualified_name: "com.example.repository.UserRepository::updateUser".to_string(),
-        line_range: (40, 50),
+        file_path: std::path::PathBuf::from("test.java"),        line_range: (40, 50),
         calls: vec![],
         http_annotations: None,
         kafka_operations: vec![],
@@ -242,7 +243,7 @@ fn test_redis_prefix_config_association() {
     let reader = MethodInfo {
         name: "getUserFromCache".to_string(),
         full_qualified_name: "com.example.cache.UserCache::getUserFromCache".to_string(),
-        line_range: (10, 20),
+        file_path: std::path::PathBuf::from("test.java"),        line_range: (10, 20),
         calls: vec![],
         http_annotations: None,
         kafka_operations: vec![],
@@ -260,7 +261,7 @@ fn test_redis_prefix_config_association() {
     let writer = MethodInfo {
         name: "cacheUser".to_string(),
         full_qualified_name: "com.example.cache.UserCache::cacheUser".to_string(),
-        line_range: (25, 35),
+        file_path: std::path::PathBuf::from("test.java"),        line_range: (25, 35),
         calls: vec![],
         http_annotations: None,
         kafka_operations: vec![],
@@ -307,7 +308,7 @@ fn test_mixed_config_association() {
     let service_method = MethodInfo {
         name: "processUserRegistration".to_string(),
         full_qualified_name: "com.example.service.UserService::processUserRegistration".to_string(),
-        line_range: (10, 50),
+        file_path: std::path::PathBuf::from("test.java"),        line_range: (10, 50),
         calls: vec![],
         http_annotations: None,
         kafka_operations: vec![
@@ -382,7 +383,7 @@ fn test_config_association_deduplication() {
     let producer1 = MethodInfo {
         name: "sendEvent1".to_string(),
         full_qualified_name: "com.example.Producer1::sendEvent1".to_string(),
-        line_range: (10, 20),
+        file_path: std::path::PathBuf::from("test.java"),        line_range: (10, 20),
         calls: vec![],
         http_annotations: None,
         kafka_operations: vec![
@@ -399,7 +400,7 @@ fn test_config_association_deduplication() {
     let producer2 = MethodInfo {
         name: "sendEvent2".to_string(),
         full_qualified_name: "com.example.Producer2::sendEvent2".to_string(),
-        line_range: (30, 40),
+        file_path: std::path::PathBuf::from("test.java"),        line_range: (30, 40),
         calls: vec![],
         http_annotations: None,
         kafka_operations: vec![

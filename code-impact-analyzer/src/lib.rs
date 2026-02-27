@@ -10,6 +10,7 @@ pub mod parse_cache;
 pub mod impact_tracer;
 pub mod orchestrator;
 pub mod cli;
+pub mod index_storage;
 
 pub use types::*;
 pub use errors::*;
@@ -23,11 +24,63 @@ pub use parse_cache::*;
 pub use impact_tracer::*;
 pub use orchestrator::*;
 pub use cli::*;
+pub use index_storage::*;
 
 /// 主分析流程
 /// 
 /// 连接所有模块，执行完整的代码影响分析流程
 pub fn run(args: CliArgs) -> Result<(), AnalysisError> {
+    // 创建索引存储管理器
+    let index_storage = IndexStorage::new(args.workspace_path.clone());
+    
+    // 处理索引管理命令
+    if args.clear_index {
+        log::info!("Clearing index...");
+        index_storage.clear_index()
+            .map_err(|e| AnalysisError::IndexBuildError(e))?;
+        println!("Index cleared successfully");
+        return Ok(());
+    }
+    
+    if args.index_info {
+        log::info!("Retrieving index information...");
+        match index_storage.get_index_info()
+            .map_err(|e| AnalysisError::IndexBuildError(e))? {
+            Some(metadata) => {
+                println!("Index Information:");
+                println!("  Version: {}", metadata.version);
+                println!("  Workspace: {:?}", metadata.workspace_path);
+                println!("  Created: {}", format_timestamp(metadata.created_at));
+                println!("  Updated: {}", format_timestamp(metadata.updated_at));
+                println!("  Files: {}", metadata.file_count);
+                println!("  Methods: {}", metadata.method_count);
+                println!("  Checksum: {}", metadata.checksum);
+            }
+            None => {
+                println!("No index found");
+            }
+        }
+        return Ok(());
+    }
+    
+    if args.verify_index {
+        log::info!("Verifying index...");
+        match index_storage.get_index_info()
+            .map_err(|e| AnalysisError::IndexBuildError(e))? {
+            Some(metadata) => {
+                if metadata.is_valid(&args.workspace_path) {
+                    println!("Index is valid");
+                } else {
+                    println!("Index is invalid or outdated");
+                }
+            }
+            None => {
+                println!("No index found");
+            }
+        }
+        return Ok(());
+    }
+    
     // 验证输入路径
     if !args.workspace_path.exists() {
         return Err(AnalysisError::IoError(
@@ -61,6 +114,9 @@ pub fn run(args: CliArgs) -> Result<(), AnalysisError> {
         trace_config,
     )?;
     
+    // 设置是否强制重建索引
+    orchestrator.set_force_rebuild(args.rebuild_index);
+    
     // 执行分析
     log::info!("Starting analysis...");
     let result = orchestrator.analyze(&args.diff_path)?;
@@ -87,6 +143,27 @@ pub fn run(args: CliArgs) -> Result<(), AnalysisError> {
     
     log::info!("Analysis completed successfully");
     Ok(())
+}
+
+/// 格式化时间戳
+fn format_timestamp(timestamp: u64) -> String {
+    use std::time::{UNIX_EPOCH, Duration};
+    
+    let datetime = UNIX_EPOCH + Duration::from_secs(timestamp);
+    
+    // 简单格式化（实际应用中可以使用 chrono 库）
+    match datetime.duration_since(UNIX_EPOCH) {
+        Ok(duration) => {
+            let secs = duration.as_secs();
+            let days = secs / 86400;
+            let hours = (secs % 86400) / 3600;
+            let minutes = (secs % 3600) / 60;
+            let seconds = secs % 60;
+            
+            format!("{} days, {:02}:{:02}:{:02}", days, hours, minutes, seconds)
+        }
+        Err(_) => "Invalid timestamp".to_string(),
+    }
 }
 
 /// 输出分析结果

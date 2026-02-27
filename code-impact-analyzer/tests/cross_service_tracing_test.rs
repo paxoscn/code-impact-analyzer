@@ -15,12 +15,14 @@ fn test_http_bidirectional_tracing() {
     let provider = MethodInfo {
         name: "getUser".to_string(),
         full_qualified_name: "com.example.UserController::getUser".to_string(),
+        file_path: std::path::PathBuf::from("test.java"),
         line_range: (10, 20),
         calls: vec![],
         http_annotations: Some(HttpAnnotation {
             method: HttpMethod::GET,
             path: "/api/users/{id}".to_string(),
             path_params: vec!["id".to_string()],
+            is_feign_client: false,
         }),
         kafka_operations: vec![],
         db_operations: vec![],
@@ -68,6 +70,7 @@ fn test_kafka_producer_to_consumer_tracing() {
     let producer = MethodInfo {
         name: "sendEvent".to_string(),
         full_qualified_name: "com.example.EventProducer::sendEvent".to_string(),
+        file_path: std::path::PathBuf::from("test.java"),
         line_range: (10, 20),
         calls: vec![],
         http_annotations: None,
@@ -84,6 +87,7 @@ fn test_kafka_producer_to_consumer_tracing() {
     let consumer = MethodInfo {
         name: "handleEvent".to_string(),
         full_qualified_name: "com.example.EventConsumer::handleEvent".to_string(),
+        file_path: std::path::PathBuf::from("test.java"),
         line_range: (30, 40),
         calls: vec![],
         http_annotations: None,
@@ -149,6 +153,7 @@ fn test_kafka_consumer_to_producer_tracing() {
     let producer = MethodInfo {
         name: "sendEvent".to_string(),
         full_qualified_name: "com.example.EventProducer::sendEvent".to_string(),
+        file_path: std::path::PathBuf::from("test.java"),
         line_range: (10, 20),
         calls: vec![],
         http_annotations: None,
@@ -165,6 +170,7 @@ fn test_kafka_consumer_to_producer_tracing() {
     let consumer = MethodInfo {
         name: "processOrder".to_string(),
         full_qualified_name: "com.example.OrderProcessor::processOrder".to_string(),
+        file_path: std::path::PathBuf::from("test.java"),
         line_range: (30, 40),
         calls: vec![],
         http_annotations: None,
@@ -210,6 +216,7 @@ fn test_database_writer_to_reader_tracing() {
     let writer = MethodInfo {
         name: "saveUser".to_string(),
         full_qualified_name: "com.example.UserRepository::saveUser".to_string(),
+        file_path: std::path::PathBuf::from("test.java"),
         line_range: (10, 20),
         calls: vec![],
         http_annotations: None,
@@ -226,6 +233,7 @@ fn test_database_writer_to_reader_tracing() {
     let reader = MethodInfo {
         name: "findUser".to_string(),
         full_qualified_name: "com.example.UserRepository::findUser".to_string(),
+        file_path: std::path::PathBuf::from("test.java"),
         line_range: (30, 40),
         calls: vec![],
         http_annotations: None,
@@ -291,6 +299,7 @@ fn test_database_reader_to_writer_tracing() {
     let writer = MethodInfo {
         name: "updateOrder".to_string(),
         full_qualified_name: "com.example.OrderRepository::updateOrder".to_string(),
+        file_path: std::path::PathBuf::from("test.java"),
         line_range: (10, 20),
         calls: vec![],
         http_annotations: None,
@@ -307,6 +316,7 @@ fn test_database_reader_to_writer_tracing() {
     let reader = MethodInfo {
         name: "getOrder".to_string(),
         full_qualified_name: "com.example.OrderRepository::getOrder".to_string(),
+        file_path: std::path::PathBuf::from("test.java"),
         line_range: (30, 40),
         calls: vec![],
         http_annotations: None,
@@ -352,6 +362,7 @@ fn test_redis_writer_to_reader_tracing() {
     let writer = MethodInfo {
         name: "cacheSession".to_string(),
         full_qualified_name: "com.example.SessionCache::cacheSession".to_string(),
+        file_path: std::path::PathBuf::from("test.java"),
         line_range: (10, 20),
         calls: vec![],
         http_annotations: None,
@@ -368,6 +379,7 @@ fn test_redis_writer_to_reader_tracing() {
     let reader = MethodInfo {
         name: "getSession".to_string(),
         full_qualified_name: "com.example.SessionCache::getSession".to_string(),
+        file_path: std::path::PathBuf::from("test.java"),
         line_range: (30, 40),
         calls: vec![],
         http_annotations: None,
@@ -433,6 +445,7 @@ fn test_redis_reader_to_writer_tracing() {
     let writer = MethodInfo {
         name: "cacheUser".to_string(),
         full_qualified_name: "com.example.UserCache::cacheUser".to_string(),
+        file_path: std::path::PathBuf::from("test.java"),
         line_range: (10, 20),
         calls: vec![],
         http_annotations: None,
@@ -449,6 +462,7 @@ fn test_redis_reader_to_writer_tracing() {
     let reader = MethodInfo {
         name: "getUser".to_string(),
         full_qualified_name: "com.example.UserCache::getUser".to_string(),
+        file_path: std::path::PathBuf::from("test.java"),
         line_range: (30, 40),
         calls: vec![],
         http_annotations: None,
@@ -496,6 +510,7 @@ fn test_complex_cross_service_tracing() {
     let http_handler = MethodInfo {
         name: "handleRequest".to_string(),
         full_qualified_name: "com.example.Controller::handleRequest".to_string(),
+        file_path: std::path::PathBuf::from("test.java"),
         line_range: (10, 20),
         calls: vec![MethodCall {
             target: "com.example.Service::processRequest".to_string(),
@@ -505,6 +520,7 @@ fn test_complex_cross_service_tracing() {
             method: HttpMethod::POST,
             path: "/api/process".to_string(),
             path_params: vec![],
+            is_feign_client: false,
         }),
         kafka_operations: vec![],
         db_operations: vec![],
@@ -514,6 +530,7 @@ fn test_complex_cross_service_tracing() {
     let service_method = MethodInfo {
         name: "processRequest".to_string(),
         full_qualified_name: "com.example.Service::processRequest".to_string(),
+        file_path: std::path::PathBuf::from("test.java"),
         line_range: (30, 40),
         calls: vec![],
         http_annotations: None,
@@ -529,6 +546,7 @@ fn test_complex_cross_service_tracing() {
     let kafka_consumer = MethodInfo {
         name: "handleEvent".to_string(),
         full_qualified_name: "com.example.EventHandler::handleEvent".to_string(),
+        file_path: std::path::PathBuf::from("test.java"),
         line_range: (50, 60),
         calls: vec![],
         http_annotations: None,
@@ -548,6 +566,7 @@ fn test_complex_cross_service_tracing() {
     let db_reader = MethodInfo {
         name: "queryEvents".to_string(),
         full_qualified_name: "com.example.EventQuery::queryEvents".to_string(),
+        file_path: std::path::PathBuf::from("test.java"),
         line_range: (70, 80),
         calls: vec![],
         http_annotations: None,
@@ -567,6 +586,7 @@ fn test_complex_cross_service_tracing() {
     let redis_reader = MethodInfo {
         name: "getCachedEvent".to_string(),
         full_qualified_name: "com.example.EventCache::getCachedEvent".to_string(),
+        file_path: std::path::PathBuf::from("test.java"),
         line_range: (90, 100),
         calls: vec![],
         http_annotations: None,

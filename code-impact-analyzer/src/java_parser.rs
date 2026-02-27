@@ -582,8 +582,8 @@ impl JavaParser {
         // 提取导入语句，建立简单类名到完整类名的映射
         let import_map = self.build_import_map(source, tree);
         
-        // 提取类中的字段声明，建立字段名到类型的映射
-        let field_types = self.extract_field_types(source, method_node);
+        // 提取类中的字段声明和方法内的本地变量，建立变量名到类型的映射
+        let field_types = self.extract_field_types(source, method_node, tree);
         
         self.walk_node_for_calls(source, *method_node, &mut calls, &field_types, &import_map);
         calls
@@ -626,11 +626,11 @@ impl JavaParser {
         }
     }
     
-    /// 提取类中的字段类型映射
-    fn extract_field_types(&self, source: &str, method_node: &tree_sitter::Node) -> std::collections::HashMap<String, String> {
+    /// 提取类中的字段类型映射（包括类字段和方法内的本地变量）
+    fn extract_field_types(&self, source: &str, method_node: &tree_sitter::Node, tree: &tree_sitter::Tree) -> std::collections::HashMap<String, String> {
         let mut field_types = std::collections::HashMap::new();
         
-        // 向上查找到类节点
+        // 1. 向上查找到类节点，提取类字段
         let mut current = method_node.parent();
         while let Some(node) = current {
             if node.kind() == "class_declaration" {
@@ -651,7 +651,54 @@ impl JavaParser {
             current = node.parent();
         }
         
+        // 2. 提取方法内的本地变量
+        self.extract_local_variable_types(source, method_node, tree, &mut field_types);
+        
         field_types
+    }
+    
+    /// 提取方法内的本地变量类型，并解析为完整类名
+    fn extract_local_variable_types(
+        &self,
+        source: &str,
+        method_node: &tree_sitter::Node,
+        tree: &tree_sitter::Tree,
+        field_types: &mut std::collections::HashMap<String, String>,
+    ) {
+        // 先提取本地变量的简单类型
+        self.walk_node_for_local_vars(source, *method_node, field_types);
+        
+        // 获取导入映射和包名，用于解析完整类名
+        let import_map = self.build_import_map(source, tree);
+        let package_name = self.extract_package_name(source, tree);
+        
+        // 将简单类名解析为完整类名
+        let mut resolved_types = std::collections::HashMap::new();
+        for (var_name, simple_type) in field_types.iter() {
+            let full_type = self.resolve_full_class_name(simple_type, &import_map, &package_name);
+            resolved_types.insert(var_name.clone(), full_type);
+        }
+        
+        // 更新 field_types
+        *field_types = resolved_types;
+    }
+    
+    /// 递归遍历节点查找本地变量声明
+    fn walk_node_for_local_vars(
+        &self,
+        source: &str,
+        node: tree_sitter::Node,
+        field_types: &mut std::collections::HashMap<String, String>,
+    ) {
+        if node.kind() == "local_variable_declaration" {
+            // 提取本地变量的类型和名称
+            self.extract_field_type_from_declaration(source, node, field_types);
+        }
+        
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            self.walk_node_for_local_vars(source, child, field_types);
+        }
     }
     
     /// 从字段声明中提取字段名和类型
@@ -770,6 +817,9 @@ impl JavaParser {
                 method_name.clone()
             };
             
+            if target.contains("doSendCouponTemplate") {
+                println!("target = {}", target);
+            }
             calls.push(MethodCall {
                 target,
                 line,
@@ -1457,6 +1507,180 @@ mod tests {
     }
     
     #[test]
+    fn test_extract_local_variable_method_calls() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+            package com.example;
+            
+            public class TestLocalVariable {
+                public void go() {
+                    Foo foo = new Foo();
+                    foo.bar();
+                }
+            }
+            
+            class Foo {
+                public void bar() {
+                    System.out.println("bar called");
+                }
+            }
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("TestLocalVariable.java")).unwrap();
+        assert_eq!(result.classes.len(), 2);
+        
+        // 查找 TestLocalVariable 类的 go 方法
+        let test_class = result.classes.iter()
+            .find(|c| c.name.contains("TestLocalVariable"))
+            .expect("Should find TestLocalVariable class");
+        
+        assert_eq!(test_class.methods.len(), 1);
+        let go_method = &test_class.methods[0];
+        assert_eq!(go_method.name, "go");
+        
+        // 验证方法调用
+        assert_eq!(go_method.calls.len(), 1, "Should have 1 method call");
+        
+        // 应该解析为 Foo::bar 或 com.example.Foo::bar
+        let call_target = &go_method.calls[0].target;
+        assert!(
+            call_target.contains("Foo::bar"),
+            "Should resolve to Foo::bar, got: {}",
+            call_target
+        );
+    }
+    
+    #[test]
+    fn test_extract_local_variable_with_imports() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+            package com.example;
+            
+            import com.hualala.shop.equipment.EquipmentManageExe;
+            
+            public class TestController {
+                public void testMethod() {
+                    // 本地变量使用导入的类
+                    EquipmentManageExe localExe = new EquipmentManageExe();
+                    localExe.listExecuteSchedule("");
+                }
+            }
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("TestController.java")).unwrap();
+        assert_eq!(result.classes.len(), 1);
+        assert_eq!(result.classes[0].methods.len(), 1);
+        
+        let method = &result.classes[0].methods[0];
+        assert_eq!(method.calls.len(), 1);
+        
+        // 应该解析为完整的导入类名::方法名格式
+        assert_eq!(
+            method.calls[0].target,
+            "com.hualala.shop.equipment.EquipmentManageExe::listExecuteSchedule"
+        );
+    }
+    
+    #[test]
+    fn test_extract_mixed_field_and_local_variable_calls() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+            package com.example;
+            
+            import com.hualala.shop.equipment.EquipmentManageExe;
+            
+            public class TestController {
+                private EquipmentManageExe fieldExe;
+                
+                public void testMethod() {
+                    // 类字段调用
+                    fieldExe.listExecuteSchedule("field");
+                    
+                    // 本地变量调用
+                    EquipmentManageExe localExe = new EquipmentManageExe();
+                    localExe.listExecuteSchedule("local");
+                }
+            }
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("TestController.java")).unwrap();
+        assert_eq!(result.classes.len(), 1);
+        assert_eq!(result.classes[0].methods.len(), 1);
+        
+        let method = &result.classes[0].methods[0];
+        assert_eq!(method.calls.len(), 2, "Should have 2 method calls");
+        
+        // 两个调用都应该解析为完整的类名::方法名格式
+        for call in &method.calls {
+            assert_eq!(
+                call.target,
+                "com.hualala.shop.equipment.EquipmentManageExe::listExecuteSchedule"
+            );
+        }
+    }
+    
+    #[test]
+    fn test_extract_self_type_local_variable() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+            package com.example;
+            
+            public class Builder {
+                private String name;
+                
+                public Builder setName(String name) {
+                    this.name = name;
+                    return this;
+                }
+                
+                public Builder build() {
+                    // 本地变量类型为当前类自身
+                    Builder builder = new Builder();
+                    builder.setName("test");
+                    return builder;
+                }
+                
+                public static Builder createBuilder() {
+                    // 静态方法中的本地变量
+                    Builder instance = new Builder();
+                    instance.setName("static");
+                    return instance;
+                }
+            }
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("Builder.java")).unwrap();
+        assert_eq!(result.classes.len(), 1);
+        
+        let builder_class = &result.classes[0];
+        assert_eq!(builder_class.name, "com.example.Builder");
+        
+        // 测试 build() 方法
+        let build_method = builder_class.methods.iter()
+            .find(|m| m.name == "build")
+            .expect("Should find build method");
+        
+        assert_eq!(build_method.calls.len(), 1, "build() should have 1 method call");
+        assert!(
+            build_method.calls[0].target.contains("com.example.Builder::setName"),
+            "Should resolve to com.example.Builder::setName, got: {}",
+            build_method.calls[0].target
+        );
+        
+        // 测试 createBuilder() 静态方法
+        let create_method = builder_class.methods.iter()
+            .find(|m| m.name == "createBuilder")
+            .expect("Should find createBuilder method");
+        
+        assert_eq!(create_method.calls.len(), 1, "createBuilder() should have 1 method call");
+        assert!(
+            create_method.calls[0].target.contains("com.example.Builder::setName"),
+            "Should resolve to com.example.Builder::setName in static method, got: {}",
+            create_method.calls[0].target
+        );
+    }
+    
+    #[test]
     fn test_extract_various_method_call_patterns() {
         let parser = JavaParser::new().unwrap();
         let source = r#"
@@ -1613,8 +1837,8 @@ mod tests {
         
         // 验证实例方法调用仍然正常工作
         assert!(
-            call_targets.contains(&"UserService::findUser"),
-            "Should find UserService::findUser, got: {:?}", call_targets
+            call_targets.iter().any(|t| t.contains("UserService::findUser")),
+            "Should find UserService::findUser (with or without package), got: {:?}", call_targets
         );
     }
     

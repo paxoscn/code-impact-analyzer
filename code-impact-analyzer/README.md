@@ -60,6 +60,8 @@ cargo install --path .
 ```bash
 code-impact-analyzer --workspace <工作空间路径> --diff <patch目录路径>
 cargo run -- --workspace /Users/lindagao/Workspace/javadiff/examples/single-call --diff /Users/lindagao/Workspace/javadiff/examples/single-call/patches
+cargo run -- --workspace /Users/lindagao/Workspace/javadiff/examples/added-one-line --diff /Users/lindagao/Workspace/javadiff/examples/added-one-line/patches
+cargo run -- --workspace /Users/lindagao/Workspace/javadiff/examples/removed-one-line --diff /Users/lindagao/Workspace/javadiff/examples/removed-one-line/patches
 cargo run -- --workspace /Users/lindagao/Workspace/test/ws --diff /Users/lindagao/Workspace/javadiff/examples/single-call/patches
 ```
 

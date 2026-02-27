@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::fs;
 use std::sync::{Arc, Mutex};
 use rayon::prelude::*;
+use indicatif::{ProgressBar, ProgressStyle, ParallelProgressIterator};
 use crate::errors::IndexError;
 use crate::language_parser::{LanguageParser, LanguageDetector, ParsedFile, MethodInfo, FunctionInfo};
 use crate::types::{HttpAnnotation, HttpEndpoint};
@@ -91,33 +92,75 @@ impl CodeIndex {
         workspace_path: &Path,
         parsers: &[Box<dyn LanguageParser>],
     ) -> Result<(), IndexError> {
+        log::info!("开始收集源文件...");
+        
         // 遍历工作空间中的所有文件
         let source_files = self.collect_source_files(workspace_path)?;
+        let total_files = source_files.len();
+        
+        log::info!("找到 {} 个源文件，开始并行解析...", total_files);
+        
+        // 创建进度条
+        let pb = ProgressBar::new(total_files as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
+                .unwrap()
+                .progress_chars("=>-")
+        );
+        pb.set_message("解析源文件");
         
         // 创建线程安全的解析缓存
         let cache = Arc::new(Mutex::new(ParseCache::new()));
         
-        // 使用 rayon 并行解析所有源文件
+        // 使用 rayon 并行解析所有源文件，并显示进度
         let parsed_files: Vec<ParsedFile> = source_files
             .par_iter()
+            .progress_with(pb.clone())
             .filter_map(|file_path| {
                 match self.parse_file_with_cache(file_path, parsers, &cache) {
                     Ok(parsed) => Some(parsed),
                     Err(e) => {
                         // 记录错误但继续处理其他文件
-                        eprintln!("Warning: Failed to parse {}: {}", file_path.display(), e);
+                        log::warn!("解析失败 {}: {}", file_path.display(), e);
                         None
                     }
                 }
             })
             .collect();
         
+        pb.finish_with_message(format!("解析完成：{}/{} 个文件", parsed_files.len(), total_files));
+        
+        // 创建索引构建进度条
+        let index_pb = ProgressBar::new(parsed_files.len() as u64);
+        index_pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] {bar:40.green/blue} {pos}/{len} {msg}")
+                .unwrap()
+                .progress_chars("=>-")
+        );
+        index_pb.set_message("构建索引");
+        
+        log::info!("开始构建索引，处理 {} 个已解析文件...", parsed_files.len());
+        
         // 串行构建索引（确保线程安全）
         for parsed_file in parsed_files {
             if let Err(e) = self.index_parsed_file(parsed_file) {
-                eprintln!("Warning: Failed to index parsed file: {}", e);
+                log::warn!("索引文件失败: {}", e);
             }
+            index_pb.inc(1);
         }
+        
+        index_pb.finish_with_message("索引构建完成");
+        
+        log::info!("索引构建完成：");
+        log::info!("  - 方法总数: {}", self.methods.len());
+        log::info!("  - 方法调用关系: {}", self.method_calls.len());
+        log::info!("  - HTTP 提供者: {}", self.http_providers.len());
+        log::info!("  - HTTP 消费者: {}", self.http_consumers.len());
+        log::info!("  - Kafka 生产者: {}", self.kafka_producers.len());
+        log::info!("  - Kafka 消费者: {}", self.kafka_consumers.len());
+        log::info!("  - 接口实现关系: {}", self.interface_implementations.len());
         
         Ok(())
     }

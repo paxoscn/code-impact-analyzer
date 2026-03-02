@@ -316,52 +316,193 @@ impl AnalysisOrchestrator {
     
     /// 构建代码索引
     fn build_index(&mut self) -> Result<CodeIndex, AnalysisError> {
-        // 如果强制重建，清除现有索引
-        if self.force_rebuild {
-            log::info!("Force rebuild enabled, clearing existing index");
-            if let Err(e) = self.index_storage.clear_index() {
-                log::warn!("Failed to clear index: {}", e);
+        log::info!("开始构建代码索引...");
+        
+        // 检测workspace下的第一层项目目录
+        let projects = self.detect_projects()?;
+        
+        if projects.is_empty() {
+            log::warn!("未在workspace中检测到任何项目");
+            return Ok(CodeIndex::new());
+        }
+        
+        log::info!("检测到 {} 个项目", projects.len());
+        
+        // 创建全局索引用于合并所有项目的索引
+        let mut global_index = CodeIndex::new();
+        
+        // 为每个项目分别构建索引
+        for project_name in &projects {
+            log::info!("处理项目: {}", project_name);
+            
+            let project_path = self.workspace_path.join(project_name);
+            let project_storage = IndexStorage::new_for_project(
+                self.workspace_path.clone(),
+                project_name.clone()
+            );
+            
+            // 检查是否需要重建该项目的索引
+            let mut project_index = if self.force_rebuild {
+                log::info!("强制重建项目索引: {}", project_name);
+                if let Err(e) = project_storage.clear_index() {
+                    log::warn!("清除项目索引失败: {}", e);
+                }
+                None
+            } else {
+                // 尝试加载现有索引
+                match project_storage.load_index() {
+                    Ok(Some(index)) => {
+                        log::info!("从缓存加载项目索引: {}", project_name);
+                        Some(index)
+                    }
+                    Ok(None) => {
+                        log::info!("项目索引不存在，将创建新索引: {}", project_name);
+                        None
+                    }
+                    Err(e) => {
+                        log::warn!("加载项目索引失败: {}, 将重建", e);
+                        None
+                    }
+                }
+            };
+            
+            // 如果没有有效的索引，则构建新索引
+            if project_index.is_none() {
+                let mut new_index = CodeIndex::new();
+                match new_index.index_project(&project_path, &self.parsers) {
+                    Ok(_) => {
+                        log::info!("项目索引构建成功: {}", project_name);
+                        
+                        // 保存项目索引
+                        if let Err(e) = project_storage.save_index(&new_index) {
+                            log::warn!("保存项目索引失败: {}", e);
+                        }
+                        
+                        project_index = Some(new_index);
+                    }
+                    Err(e) => {
+                        log::error!("项目索引构建失败: {}, 错误: {}", project_name, e);
+                        self.warnings.push(format!("项目 {} 索引构建失败: {}", project_name, e));
+                        continue;
+                    }
+                }
+            }
+            
+            // 合并项目索引到全局索引
+            if let Some(index) = project_index {
+                self.merge_index(&mut global_index, index);
             }
         }
         
-        // 尝试加载现有索引
-        if !self.force_rebuild {
-            match self.index_storage.load_index() {
-                Ok(Some(index)) => {
-                    log::info!("Loaded existing index from cache");
-                    return Ok(index);
+        // 解析配置文件并关联到代码
+        self.parse_and_associate_configs(&mut global_index);
+        
+        // 保存全局项目列表元数据
+        if let Err(e) = IndexStorage::save_projects_metadata(&self.workspace_path, &projects) {
+            log::warn!("保存项目列表元数据失败: {}", e);
+        }
+        
+        log::info!("全局索引构建完成");
+        log::info!("  - 总方法数: {}", global_index.methods().count());
+        
+        Ok(global_index)
+    }
+    
+    /// 检测workspace下第一层的项目目录
+    fn detect_projects(&self) -> Result<Vec<String>, AnalysisError> {
+        use std::fs;
+        
+        let mut projects = Vec::new();
+        
+        let entries = fs::read_dir(&self.workspace_path)?;
+        
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+            
+            // 只处理目录
+            if !path.is_dir() {
+                continue;
+            }
+            
+            // 跳过隐藏目录和特殊目录
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with('.') || name == "target" || name == "build" || name == "node_modules" {
+                    continue;
                 }
-                Ok(None) => {
-                    log::info!("No valid index found, building new index");
-                }
-                Err(e) => {
-                    log::warn!("Failed to load index: {}, will rebuild", e);
+                
+                // // 检查是否是有效的项目目录（包含源代码）
+                // if self.is_project_directory(&path) {
+                    projects.push(name.to_string());
+                    log::debug!("检测到项目: {}", name);
+                // }
+            }
+        }
+        
+        projects.sort();
+        Ok(projects)
+    }
+    
+    /// 检查目录是否是项目目录
+    fn is_project_directory(&self, path: &Path) -> bool {
+        use std::fs;
+        
+        // 检查是否包含常见的项目标识文件或目录
+        let indicators = [
+            "src",           // 源代码目录
+            "pom.xml",       // Maven项目
+            "build.gradle",  // Gradle项目
+            "Cargo.toml",    // Rust项目
+            "package.json",  // Node.js项目
+            "go.mod",        // Go项目
+        ];
+        
+        for indicator in &indicators {
+            if path.join(indicator).exists() {
+                return true;
+            }
+        }
+        
+        // 检查是否包含任何源文件
+        if let Ok(entries) = fs::read_dir(path) {
+            for entry in entries.flatten() {
+                let entry_path = entry.path();
+                if entry_path.is_dir() {
+                    // 递归检查一层子目录
+                    if let Ok(sub_entries) = fs::read_dir(&entry_path) {
+                        for sub_entry in sub_entries.flatten() {
+                            if self.is_source_file(&sub_entry.path()) {
+                                return true;
+                            }
+                        }
+                    }
+                } else if self.is_source_file(&entry_path) {
+                    return true;
                 }
             }
         }
         
-        // 构建新索引
-        let mut index = CodeIndex::new();
+        false
+    }
+    
+    /// 检查是否是源文件
+    fn is_source_file(&self, path: &Path) -> bool {
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            matches!(ext, "java" | "rs" | "kt" | "scala" | "go" | "py" | "js" | "ts")
+        } else {
+            false
+        }
+    }
+    
+    /// 合并项目索引到全局索引
+    fn merge_index(&self, global: &mut CodeIndex, project: CodeIndex) {
+        // 这里需要实现索引合并逻辑
+        // 由于CodeIndex的字段是私有的，我们需要通过公共API来合并
+        // 暂时使用简单的方法：遍历项目索引的所有方法并添加到全局索引
         
-        match index.index_workspace(&self.workspace_path, &self.parsers) {
-            Ok(_) => {
-                log::info!("Workspace indexed successfully");
-                
-                // 解析配置文件并关联到代码
-                self.parse_and_associate_configs(&mut index);
-                
-                // 保存索引到磁盘
-                if let Err(e) = self.index_storage.save_index(&index) {
-                    log::warn!("Failed to save index: {}", e);
-                    // 不中断流程，继续使用内存中的索引
-                }
-                
-                Ok(index)
-            }
-            Err(e) => {
-                let error_msg = format!("Failed to build index: {}", e);
-                self.errors.push(error_msg.clone());
-                Err(AnalysisError::IndexBuildError(e))
+        for (_, method) in project.methods() {
+            if let Err(e) = global.test_index_method(method) {
+                log::warn!("合并方法索引失败: {}", e);
             }
         }
     }

@@ -167,6 +167,97 @@ impl CodeIndex {
         Ok(())
     }
     
+    /// 索引单个项目
+    /// 
+    /// # Arguments
+    /// * `project_path` - 项目目录路径
+    /// * `parsers` - 语言解析器列表
+    /// 
+    /// # Returns
+    /// * `Ok(())` - 索引构建成功
+    /// * `Err(IndexError)` - 索引构建失败
+    pub fn index_project(
+        &mut self,
+        project_path: &Path,
+        parsers: &[Box<dyn LanguageParser>],
+    ) -> Result<(), IndexError> {
+        log::info!("开始索引项目: {}", project_path.display());
+        
+        // 收集项目中的源文件
+        let source_files = self.collect_source_files(project_path)?;
+        let total_files = source_files.len();
+        
+        if total_files == 0 {
+            log::warn!("项目中没有找到源文件: {}", project_path.display());
+            return Ok(());
+        }
+        
+        log::info!("找到 {} 个源文件，开始并行解析...", total_files);
+        
+        // 创建进度条
+        let pb = ProgressBar::new(total_files as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
+                .unwrap()
+                .progress_chars("=>-")
+        );
+        pb.set_message(format!("解析 {}", project_path.file_name().unwrap_or_default().to_string_lossy()));
+        
+        // 创建线程安全的解析缓存
+        let cache = Arc::new(Mutex::new(ParseCache::new()));
+        
+        // 使用 rayon 并行解析所有源文件
+        let parsed_files: Vec<ParsedFile> = source_files
+            .par_iter()
+            .progress_with(pb.clone())
+            .filter_map(|file_path| {
+                match self.parse_file_with_cache(file_path, parsers, &cache) {
+                    Ok(parsed) => Some(parsed),
+                    Err(e) => {
+                        log::warn!("解析失败 {}: {}", file_path.display(), e);
+                        None
+                    }
+                }
+            })
+            .collect();
+        
+        pb.finish_with_message(format!("解析完成：{}/{} 个文件", parsed_files.len(), total_files));
+        
+        // 创建索引构建进度条
+        let index_pb = ProgressBar::new(parsed_files.len() as u64);
+        index_pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] {bar:40.green/blue} {pos}/{len} {msg}")
+                .unwrap()
+                .progress_chars("=>-")
+        );
+        index_pb.set_message("构建索引");
+        
+        log::info!("开始构建索引，处理 {} 个已解析文件...", parsed_files.len());
+        
+        // 串行构建索引
+        for parsed_file in parsed_files {
+            if let Err(e) = self.index_parsed_file(parsed_file) {
+                log::warn!("索引文件失败: {}", e);
+            }
+            index_pb.inc(1);
+        }
+        
+        index_pb.finish_with_message("索引构建完成");
+        
+        log::info!("项目索引完成: {}", project_path.display());
+        log::info!("  - 方法总数: {}", self.methods.len());
+        log::info!("  - 方法调用关系: {}", self.method_calls.len());
+        log::info!("  - HTTP 提供者: {}", self.http_providers.len());
+        log::info!("  - HTTP 消费者: {}", self.http_consumers.len());
+        log::info!("  - Kafka 生产者: {}", self.kafka_producers.len());
+        log::info!("  - Kafka 消费者: {}", self.kafka_consumers.len());
+        log::info!("  - 接口实现关系: {}", self.interface_implementations.len());
+        
+        Ok(())
+    }
+    
     /// 使用缓存解析单个文件
     /// 
     /// 此方法设计为线程安全，可以在多个线程中并行调用

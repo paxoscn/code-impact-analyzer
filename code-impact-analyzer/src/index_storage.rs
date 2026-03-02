@@ -212,16 +212,31 @@ pub struct IndexStorage {
     
     /// 索引目录路径
     index_dir: PathBuf,
+    
+    /// 项目名称（可选，用于项目级别索引）
+    project_name: Option<String>,
 }
 
 impl IndexStorage {
-    /// 创建新的索引存储管理器
+    /// 创建新的索引存储管理器（全局索引）
     pub fn new(workspace_path: PathBuf) -> Self {
         let index_dir = workspace_path.join(INDEX_DIR);
         
         Self {
             workspace_path,
             index_dir,
+            project_name: None,
+        }
+    }
+    
+    /// 创建项目级别的索引存储管理器
+    pub fn new_for_project(workspace_path: PathBuf, project_name: String) -> Self {
+        let index_dir = workspace_path.join(INDEX_DIR).join("projects").join(&project_name);
+        
+        Self {
+            workspace_path,
+            index_dir,
+            project_name: Some(project_name),
         }
     }
     
@@ -324,6 +339,51 @@ impl IndexStorage {
         
         let metadata = self.load_metadata()?;
         Ok(Some(metadata))
+    }
+    
+    /// 保存全局项目列表元数据
+    pub fn save_projects_metadata(workspace_path: &Path, projects: &[String]) -> Result<(), IndexError> {
+        let index_dir = workspace_path.join(INDEX_DIR);
+        
+        // 确保索引目录存在
+        if !index_dir.exists() {
+            fs::create_dir_all(&index_dir)
+                .map_err(|e| IndexError::IoError {
+                    path: index_dir.clone(),
+                    error: e.to_string(),
+                })?;
+        }
+        
+        let meta_path = index_dir.join(META_FILE);
+        
+        #[derive(Serialize)]
+        struct ProjectsMetadata {
+            version: String,
+            projects: Vec<String>,
+            updated_at: u64,
+        }
+        
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        
+        let metadata = ProjectsMetadata {
+            version: INDEX_VERSION.to_string(),
+            projects: projects.to_vec(),
+            updated_at: now,
+        };
+        
+        let json = serde_json::to_string_pretty(&metadata)
+            .map_err(|e| IndexError::SerializationError { message: e.to_string() })?;
+        
+        fs::write(&meta_path, json)
+            .map_err(|e| IndexError::IoError {
+                path: meta_path,
+                error: e.to_string(),
+            })?;
+        
+        Ok(())
     }
     
     // ========== 私有辅助方法 ==========

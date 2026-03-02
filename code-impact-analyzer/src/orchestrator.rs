@@ -496,15 +496,8 @@ impl AnalysisOrchestrator {
     
     /// 合并项目索引到全局索引
     fn merge_index(&self, global: &mut CodeIndex, project: CodeIndex) {
-        // 这里需要实现索引合并逻辑
-        // 由于CodeIndex的字段是私有的，我们需要通过公共API来合并
-        // 暂时使用简单的方法：遍历项目索引的所有方法并添加到全局索引
-        
-        for (_, method) in project.methods() {
-            if let Err(e) = global.test_index_method(method) {
-                log::warn!("合并方法索引失败: {}", e);
-            }
-        }
+        log::debug!("合并项目索引到全局索引");
+        global.merge(project);
     }
     
     /// 解析配置文件并关联到代码

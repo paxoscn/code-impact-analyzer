@@ -929,6 +929,105 @@ impl CodeIndex {
     pub fn test_index_parsed_file(&mut self, parsed_file: ParsedFile) -> Result<(), IndexError> {
         self.index_parsed_file(parsed_file)
     }
+    
+    /// 合并另一个索引到当前索引
+    /// 
+    /// 用于将多个项目的索引合并为全局索引
+    pub fn merge(&mut self, other: CodeIndex) {
+        // 合并方法信息
+        for (name, method) in other.methods {
+            self.methods.insert(name, method);
+        }
+        
+        // 合并方法调用关系
+        for (caller, callees) in other.method_calls {
+            self.method_calls.entry(caller)
+                .or_insert_with(Vec::new)
+                .extend(callees);
+        }
+        
+        // 合并反向调用关系
+        for (callee, callers) in other.reverse_calls {
+            self.reverse_calls.entry(callee)
+                .or_insert_with(Vec::new)
+                .extend(callers);
+        }
+        
+        // 合并 HTTP 提供者
+        for (endpoint, provider) in other.http_providers {
+            self.http_providers.insert(endpoint, provider);
+        }
+        
+        // 合并 HTTP 消费者
+        for (endpoint, consumers) in other.http_consumers {
+            self.http_consumers.entry(endpoint)
+                .or_insert_with(Vec::new)
+                .extend(consumers);
+        }
+        
+        // 合并 Kafka 生产者
+        for (topic, producers) in other.kafka_producers {
+            self.kafka_producers.entry(topic)
+                .or_insert_with(Vec::new)
+                .extend(producers);
+        }
+        
+        // 合并 Kafka 消费者
+        for (topic, consumers) in other.kafka_consumers {
+            self.kafka_consumers.entry(topic)
+                .or_insert_with(Vec::new)
+                .extend(consumers);
+        }
+        
+        // 合并数据库写入者
+        for (table, writers) in other.db_writers {
+            self.db_writers.entry(table)
+                .or_insert_with(Vec::new)
+                .extend(writers);
+        }
+        
+        // 合并数据库读取者
+        for (table, readers) in other.db_readers {
+            self.db_readers.entry(table)
+                .or_insert_with(Vec::new)
+                .extend(readers);
+        }
+        
+        // 合并 Redis 写入者
+        for (prefix, writers) in other.redis_writers {
+            self.redis_writers.entry(prefix)
+                .or_insert_with(Vec::new)
+                .extend(writers);
+        }
+        
+        // 合并 Redis 读取者
+        for (prefix, readers) in other.redis_readers {
+            self.redis_readers.entry(prefix)
+                .or_insert_with(Vec::new)
+                .extend(readers);
+        }
+        
+        // 合并配置关联
+        for (config_key, methods) in other.config_associations {
+            self.config_associations.entry(config_key)
+                .or_insert_with(Vec::new)
+                .extend(methods);
+        }
+        
+        // 合并接口实现关系
+        for (interface, implementations) in other.interface_implementations {
+            self.interface_implementations.entry(interface)
+                .or_insert_with(Vec::new)
+                .extend(implementations);
+        }
+        
+        // 合并类接口关系
+        for (class, interfaces) in other.class_interfaces {
+            self.class_interfaces.entry(class)
+                .or_insert_with(Vec::new)
+                .extend(interfaces);
+        }
+    }
 }
 
 impl Default for CodeIndex {

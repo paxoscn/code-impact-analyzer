@@ -204,3 +204,85 @@ fn test_index_info_after_save() {
     assert_eq!(info.version, "1.0.0");
     assert_eq!(info.workspace_path, workspace_path);
 }
+
+#[test]
+fn test_interface_mappings_persistence() {
+    use code_impact_analyzer::language_parser::{ParsedFile, ClassInfo};
+    
+    // 创建临时工作空间
+    let temp_dir = TempDir::new().unwrap();
+    let workspace_path = temp_dir.path().to_path_buf();
+    
+    // 创建索引存储管理器
+    let storage = IndexStorage::new(workspace_path.clone());
+    
+    // 创建索引并添加接口实现关系
+    let mut code_index = CodeIndex::new();
+    
+    // 创建两个实现类（接口类不需要索引，因为我们只关心实现关系）
+    let impl_class1 = ClassInfo {
+        name: "com.example.ServiceImpl1".to_string(),
+        line_range: (1, 20),
+        methods: vec![],
+        is_interface: false,
+        implements: vec!["com.example.Service".to_string()],
+    };
+    
+    let impl_class2 = ClassInfo {
+        name: "com.example.ServiceImpl2".to_string(),
+        line_range: (1, 20),
+        methods: vec![],
+        is_interface: false,
+        implements: vec!["com.example.Service".to_string()],
+    };
+    
+    // 索引这些类
+    let parsed_file1 = ParsedFile {
+        file_path: PathBuf::from("ServiceImpl1.java"),
+        language: "java".to_string(),
+        classes: vec![impl_class1],
+        functions: vec![],
+        imports: vec![],
+    };
+    
+    let parsed_file2 = ParsedFile {
+        file_path: PathBuf::from("ServiceImpl2.java"),
+        language: "java".to_string(),
+        classes: vec![impl_class2],
+        functions: vec![],
+        imports: vec![],
+    };
+    
+    code_index.test_index_parsed_file(parsed_file1).unwrap();
+    code_index.test_index_parsed_file(parsed_file2).unwrap();
+    
+    // 验证接口映射已建立
+    let implementations = code_index.find_interface_implementations("com.example.Service");
+    assert_eq!(implementations.len(), 2);
+    assert!(implementations.contains(&"com.example.ServiceImpl1"));
+    assert!(implementations.contains(&"com.example.ServiceImpl2"));
+    
+    let interfaces1 = code_index.find_class_interfaces("com.example.ServiceImpl1");
+    assert_eq!(interfaces1, vec!["com.example.Service"]);
+    
+    let interfaces2 = code_index.find_class_interfaces("com.example.ServiceImpl2");
+    assert_eq!(interfaces2, vec!["com.example.Service"]);
+    
+    // 保存索引
+    storage.save_index(&code_index).unwrap();
+    
+    // 加载索引
+    let loaded_index = storage.load_index().unwrap().expect("Index should exist");
+    
+    // 验证接口映射已正确恢复
+    let loaded_implementations = loaded_index.find_interface_implementations("com.example.Service");
+    assert_eq!(loaded_implementations.len(), 2);
+    assert!(loaded_implementations.contains(&"com.example.ServiceImpl1"));
+    assert!(loaded_implementations.contains(&"com.example.ServiceImpl2"));
+    
+    let loaded_interfaces1 = loaded_index.find_class_interfaces("com.example.ServiceImpl1");
+    assert_eq!(loaded_interfaces1, vec!["com.example.Service"]);
+    
+    let loaded_interfaces2 = loaded_index.find_class_interfaces("com.example.ServiceImpl2");
+    assert_eq!(loaded_interfaces2, vec!["com.example.Service"]);
+}

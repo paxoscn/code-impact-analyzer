@@ -70,6 +70,8 @@ cargo run -- --workspace /Users/lindagao/Workspace/test/ws --diff /Users/lindaga
 cargo run -- --workspace /Users/lindagao/Workspace/ws-md-gm-horizontal-alliances --diff /Users/lindagao/Workspace/ws-md-gm-horizontal-alliances
 
 cargo run -- --workspace /Users/lindagao/Workspace/syh --diff /Users/lindagao/Workspace/ws-md-gm-horizontal-alliances
+
+cargo run -- --workspace /Users/lindagao/Workspace/javadiff/examples/db-issue --diff /Users/lindagao/Workspace/javadiff/examples/db-issue
 ```
 
 ### 命令行参数

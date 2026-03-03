@@ -3,6 +3,7 @@ use std::fs;
 use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use crate::code_index::CodeIndex;
 use crate::language_parser::MethodInfo;
 use crate::errors::IndexError;
@@ -203,6 +204,12 @@ pub struct SerializableIndex {
     
     /// 配置关联映射
     pub config_associations: HashMap<String, Vec<String>>,
+    
+    /// 接口到实现类的映射
+    pub interface_implementations: HashMap<String, Vec<String>>,
+    
+    /// 实现类到接口的映射
+    pub class_interfaces: HashMap<String, Vec<String>>,
 }
 
 /// 索引存储管理器
@@ -592,6 +599,18 @@ impl IndexStorage {
         // 配置关联（暂时为空，需要从 CodeIndex 获取）
         let config_associations = HashMap::new();
         
+        // 收集接口实现映射
+        let mut interface_implementations = HashMap::new();
+        for (interface, implementations) in code_index.interface_implementations() {
+            interface_implementations.insert(interface.clone(), implementations.clone());
+        }
+        
+        // 收集类接口映射
+        let mut class_interfaces = HashMap::new();
+        for (class, interfaces) in code_index.class_interfaces() {
+            class_interfaces.insert(class.clone(), interfaces.clone());
+        }
+        
         Ok(SerializableIndex {
             methods,
             method_calls,
@@ -605,6 +624,8 @@ impl IndexStorage {
             redis_writers,
             redis_readers,
             config_associations,
+            interface_implementations,
+            class_interfaces,
         })
     }
     
@@ -619,6 +640,18 @@ impl IndexStorage {
                     message: format!("Failed to rebuild index: {}", e),
                 })?;
         }
+        
+        // 恢复接口实现映射
+        let interface_implementations: FxHashMap<String, Vec<String>> = data.interface_implementations
+            .into_iter()
+            .collect();
+        code_index.set_interface_implementations(interface_implementations);
+        
+        // 恢复类接口映射
+        let class_interfaces: FxHashMap<String, Vec<String>> = data.class_interfaces
+            .into_iter()
+            .collect();
+        code_index.set_class_interfaces(class_interfaces);
         
         Ok(code_index)
     }

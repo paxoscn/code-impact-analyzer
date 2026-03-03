@@ -623,6 +623,22 @@ impl CodeIndex {
         self.methods.iter()
     }
     
+    /// 获取所有接口实现映射
+    /// 
+    /// # Returns
+    /// 返回一个迭代器，遍历所有 (接口名, 实现类列表) 对
+    pub fn interface_implementations(&self) -> impl Iterator<Item = (&String, &Vec<String>)> {
+        self.interface_implementations.iter()
+    }
+    
+    /// 获取所有类接口映射
+    /// 
+    /// # Returns
+    /// 返回一个迭代器，遍历所有 (类名, 接口列表) 对
+    pub fn class_interfaces(&self) -> impl Iterator<Item = (&String, &Vec<String>)> {
+        self.class_interfaces.iter()
+    }
+    
     /// 关联配置数据到代码
     /// 
     /// 此方法将配置文件中的值与代码中的引用关联起来
@@ -920,6 +936,22 @@ impl CodeIndex {
     #[doc(hidden)]
     pub fn test_index_method(&mut self, method: &MethodInfo) -> Result<(), IndexError> {
         self.index_method(method)
+    }
+    
+    /// 内部方法：直接设置接口实现映射
+    /// 
+    /// 注意：此方法仅用于索引反序列化，不应在其他地方使用
+    #[doc(hidden)]
+    pub fn set_interface_implementations(&mut self, interface_implementations: FxHashMap<String, Vec<String>>) {
+        self.interface_implementations = interface_implementations;
+    }
+    
+    /// 内部方法：直接设置类接口映射
+    /// 
+    /// 注意：此方法仅用于索引反序列化，不应在其他地方使用
+    #[doc(hidden)]
+    pub fn set_class_interfaces(&mut self, class_interfaces: FxHashMap<String, Vec<String>>) {
+        self.class_interfaces = class_interfaces;
     }
     
     /// 测试辅助方法：索引解析后的文件

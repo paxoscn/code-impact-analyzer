@@ -4,6 +4,7 @@ use crate::errors::TraceError;
 use crate::types::HttpMethod;
 use serde::{Deserialize, Serialize};
 use petgraph::graph::{DiGraph, NodeIndex};
+use petgraph::visit::{EdgeRef, IntoNodeReferences};
 
 /// 追溯配置
 #[derive(Debug, Clone)]
@@ -16,6 +17,10 @@ pub struct TraceConfig {
     pub trace_downstream: bool,
     /// 是否追溯跨服务边界
     pub trace_cross_service: bool,
+    /// 是否合并相同边（默认 true）
+    pub merge_duplicate_edges: bool,
+    /// 是否隐藏方法调用节点（默认 true）
+    pub hide_method_nodes: bool,
 }
 
 impl Default for TraceConfig {
@@ -25,6 +30,8 @@ impl Default for TraceConfig {
             trace_upstream: true,
             trace_downstream: true,
             trace_cross_service: true,
+            merge_duplicate_edges: true,
+            hide_method_nodes: false,
         }
     }
 }
@@ -284,6 +291,156 @@ impl ImpactGraph {
         &self.graph
     }
     
+    /// 应用图转换：合并相同边和隐藏方法节点
+    /// 
+    /// # Arguments
+    /// * `merge_edges` - 是否合并相同边
+    /// * `hide_methods` - 是否隐藏方法节点
+    /// 
+    /// # Returns
+    /// * `ImpactGraph` - 转换后的新图
+    pub fn transform(&self, merge_edges: bool, hide_methods: bool) -> Self {
+        let mut result = Self::new();
+        
+        // 第一步：复制所有节点和边
+        for node in self.graph.node_weights() {
+            result.add_node(node.clone());
+        }
+        
+        for edge in self.graph.edge_weights() {
+            result.add_edge(&edge.from, &edge.to, edge.edge_type.clone(), edge.direction.clone());
+        }
+        
+        // 第二步：如果需要合并相同边
+        if merge_edges {
+            result = result.merge_duplicate_edges_internal();
+        }
+        
+        // 第三步：如果需要隐藏方法节点，循环处理
+        if hide_methods {
+            println!("正在隐藏方法节点. 该步骤可能耗时过长, 可去掉--hide-methods参数来关闭该行为");
+            result = result.hide_method_nodes_internal();
+        }
+        
+        result
+    }
+    
+    /// 内部方法：隐藏方法节点
+    /// 
+    /// 对于每个方法节点，如果其入度 M > 0 且出度 N > 0，
+    /// 则移除该节点，并在其所有上游节点和下游节点之间添加 M*N 条边
+    fn hide_method_nodes_internal(&self) -> Self {
+        let mut result = Self::new();
+        let mut changed = true;
+        
+        // 复制当前图
+        for node in self.graph.node_weights() {
+            result.add_node(node.clone());
+        }
+        for edge in self.graph.edge_weights() {
+            result.add_edge(&edge.from, &edge.to, edge.edge_type.clone(), edge.direction.clone());
+        }
+        
+        // 循环处理直到没有方法节点可以移除
+        while changed {
+            changed = false;
+            let mut node_to_remove = None;
+            
+            // 找到所有可以移除的方法节点
+            for node in result.graph.node_weights() {
+                if let NodeType::Method { .. } = &node.node_type {
+                    let node_index = result.node_map.get(&node.id).copied().unwrap();
+                    
+                    // 获取入边和出边
+                    let incoming: Vec<_> = result.graph
+                        .edges_directed(node_index, petgraph::Direction::Incoming)
+                        .map(|e| (e.source(), e.weight().clone()))
+                        .collect();
+                    
+                    let outgoing: Vec<_> = result.graph
+                        .edges_directed(node_index, petgraph::Direction::Outgoing)
+                        .map(|e| (e.target(), e.weight().clone()))
+                        .collect();
+                    
+                    node_to_remove = Some((node.id.clone(), incoming, outgoing));
+                    changed = true;
+                    break;
+                }
+            }
+            
+            // 处理每个要移除的节点
+            if let Some((node_id, incoming, outgoing)) = node_to_remove {
+                // 在所有上游和下游节点之间添加边
+                for (from_idx, from_edge) in &incoming {
+                    for (to_idx, _to_edge) in &outgoing {
+                        if let Some(from_node) = result.graph.node_weight(*from_idx) {
+                            if let Some(to_node) = result.graph.node_weight(*to_idx) {
+                                // 添加新边，保留边类型和方向
+                                result.graph.add_edge(
+                                    *from_idx,
+                                    *to_idx,
+                                    ImpactEdge {
+                                        from: from_node.id.clone(),
+                                        to: to_node.id.clone(),
+                                        edge_type: from_edge.edge_type.clone(),
+                                        direction: from_edge.direction.clone(),
+                                    },
+                                );
+                            }
+                        }
+                    }
+                }
+                
+                // 移除节点
+                if let Some(&node_idx) = result.node_map.get(&node_id) {
+                    result.graph.remove_node(node_idx);
+                    result.node_map.remove(&node_id);
+                }
+            }
+            
+            // 重建 node_map（因为节点索引可能已改变）
+            if changed {
+                result.node_map.clear();
+                for (idx, node) in result.graph.node_references() {
+                    result.node_map.insert(node.id.clone(), idx);
+                }
+            }
+        }
+        
+        result
+    }
+    
+    /// 内部方法：合并相同边
+    /// 
+    /// 当两个节点之间有多条边时，只保留一条
+    fn merge_duplicate_edges_internal(&self) -> Self {
+        let mut result = Self::new();
+        
+        // 复制所有节点
+        for node in self.graph.node_weights() {
+            result.add_node(node.clone());
+        }
+        
+        // 使用 HashSet 去重边
+        let mut edge_set = std::collections::HashSet::new();
+        
+        for edge in self.graph.edge_weights() {
+            // 使用 (from, to, edge_type, direction) 作为唯一标识
+            let edge_key = (
+                edge.from.clone(),
+                edge.to.clone(),
+                format!("{:?}", edge.edge_type),
+                format!("{:?}", edge.direction),
+            );
+            
+            if edge_set.insert(edge_key) {
+                result.add_edge(&edge.from, &edge.to, edge.edge_type.clone(), edge.direction.clone());
+            }
+        }
+        
+        result
+    }
+    
     /// 输出为 DOT 格式（用于 Graphviz 可视化）
     /// 
     /// # Returns
@@ -480,7 +637,13 @@ impl<'a> ImpactTracer<'a> {
             }
         }
         
-        Ok(graph)
+        // 应用图转换
+        let transformed_graph = graph.transform(
+            self.config.merge_duplicate_edges,
+            self.config.hide_method_nodes,
+        );
+        
+        Ok(transformed_graph)
     }
     
     /// 追溯方法的上游调用链（DFS）
@@ -1155,6 +1318,8 @@ mod tests {
             trace_upstream: true,
             trace_downstream: true,
             trace_cross_service: false,
+            merge_duplicate_edges: true,
+            hide_method_nodes: false,
         };
         let tracer = ImpactTracer::new(&index, config);
         
@@ -1186,6 +1351,8 @@ mod tests {
             trace_upstream: true,
             trace_downstream: false,
             trace_cross_service: false,
+            merge_duplicate_edges: true,
+            hide_method_nodes: false,
         };
         let tracer = ImpactTracer::new(&index, config);
         
@@ -1201,6 +1368,8 @@ mod tests {
             trace_upstream: false,
             trace_downstream: true,
             trace_cross_service: false,
+            merge_duplicate_edges: true,
+            hide_method_nodes: false,
         };
         let tracer = ImpactTracer::new(&index, config);
         
@@ -1216,6 +1385,8 @@ mod tests {
             trace_upstream: true,
             trace_downstream: true,
             trace_cross_service: false,
+            merge_duplicate_edges: true,
+            hide_method_nodes: false,
         };
         let tracer = ImpactTracer::new(&index, config);
         

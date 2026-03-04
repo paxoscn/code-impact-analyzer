@@ -106,6 +106,8 @@ pub fn run(args: CliArgs) -> Result<(), AnalysisError> {
         trace_upstream: true,
         trace_downstream: true,
         trace_cross_service: true,
+        merge_duplicate_edges: args.merge_duplicate_edges,
+        hide_method_nodes: args.hide_method_nodes,
     };
     
     // 创建分析编排器

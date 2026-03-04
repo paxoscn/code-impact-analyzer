@@ -133,6 +133,8 @@ fn test_interface_upstream_tracing() {
         trace_upstream: true,
         trace_downstream: false,
         trace_cross_service: false,
+        merge_duplicate_edges: true,
+        hide_method_nodes: false,
     };
     
     let tracer = ImpactTracer::new(&index, config);
@@ -328,6 +330,8 @@ fn test_multiple_interfaces_upstream_tracing() {
         trace_upstream: true,
         trace_downstream: false,
         trace_cross_service: false,
+        merge_duplicate_edges: true,
+        hide_method_nodes: false,
     };
     
     let tracer = ImpactTracer::new(&index, config);

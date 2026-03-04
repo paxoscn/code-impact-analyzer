@@ -31,6 +31,8 @@ fn test_trace_with_custom_config() {
         trace_upstream: true,
         trace_downstream: false,
         trace_cross_service: false,
+        merge_duplicate_edges: true,
+        hide_method_nodes: false,
     };
     
     let tracer = ImpactTracer::new(&index, config);
@@ -68,6 +70,8 @@ fn test_trace_with_zero_depth() {
         trace_upstream: true,
         trace_downstream: true,
         trace_cross_service: false,
+        merge_duplicate_edges: true,
+        hide_method_nodes: false,
     };
     
     let tracer = ImpactTracer::new(&index, config);

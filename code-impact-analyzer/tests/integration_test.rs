@@ -20,6 +20,12 @@ fn test_main_run_with_invalid_workspace_path() {
         output_format: OutputFormat::Dot,
         max_depth: 10,
         log_level: LogLevel::Error,
+        rebuild_index: false,
+        clear_index: false,
+        index_info: false,
+        verify_index: false,
+        merge_duplicate_edges: true,
+        hide_method_nodes: true,
     };
     
     // 运行应该失败
@@ -39,6 +45,12 @@ fn test_main_run_with_invalid_diff_path() {
         output_format: OutputFormat::Dot,
         max_depth: 10,
         log_level: LogLevel::Error,
+        rebuild_index: false,
+        clear_index: false,
+        index_info: false,
+        verify_index: false,
+        merge_duplicate_edges: true,
+        hide_method_nodes: true,
     };
     
     // 运行应该失败
@@ -73,6 +85,12 @@ fn test_output_format_selection() {
             output_format: format,
             max_depth: 10,
             log_level: LogLevel::Error,
+            rebuild_index: false,
+            clear_index: false,
+            index_info: false,
+            verify_index: false,
+            merge_duplicate_edges: true,
+            hide_method_nodes: true,
         };
         
         // 运行分析（可能会失败，但不应该 panic）

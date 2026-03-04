@@ -16,6 +16,9 @@
   - Redis 缓存键的读写操作
 - **配置文件解析**: 支持 XML 和 YAML 配置文件，提取接口地址、Topic 名称等
 - **影响图可视化**: 生成 DOT、JSON 等格式的影响图，支持图形化展示
+- **图转换功能**: 
+  - 合并相同边：简化重复的调用关系
+  - 隐藏方法节点：只显示跨服务边界的节点，突出关键依赖
 
 ### 技术特点
 
@@ -85,6 +88,17 @@ cargo run -- --workspace /Users/lindagao/Workspace/javadiff/examples/db-issue --
 - `--max-depth <N>`: 追溯的最大深度，默认为 10
 - `--log-level <LEVEL>`: 日志级别，可选值：`debug`、`info`（默认）、`warn`、`error`
 - `--output <PATH>`: 输出文件路径，默认输出到标准输出
+- `--merge-edges`: 是否合并相同边，默认启用（true）
+- `--hide-methods`: 是否隐藏方法调用节点，默认启用（true）
+
+#### 图转换功能
+
+工具支持两种图转换功能来简化影响图的可视化：
+
+1. **合并相同边** (`--merge-edges`): 当两个节点之间有多条相同类型和方向的边时，合并为一条边
+2. **隐藏方法节点** (`--hide-methods`): 移除方法调用节点，只保留跨服务边界的节点（HTTP、Kafka、数据库等）
+
+详细说明请参考 [GRAPH_TRANSFORMATION.md](GRAPH_TRANSFORMATION.md)
 
 ### 使用示例
 

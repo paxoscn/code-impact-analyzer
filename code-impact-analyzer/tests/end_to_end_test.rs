@@ -29,6 +29,12 @@ fn test_end_to_end_simple_analysis() {
         output_format: OutputFormat::Json,
         max_depth: 10,
         log_level: LogLevel::Error,
+        rebuild_index: false,
+        clear_index: false,
+        index_info: false,
+        verify_index: false,
+        merge_duplicate_edges: true,
+        hide_method_nodes: true,
     };
     
     // 运行分析
@@ -64,6 +70,12 @@ fn test_end_to_end_with_statistics() {
         output_format: OutputFormat::Dot,
         max_depth: 5,
         log_level: LogLevel::Error,
+        rebuild_index: false,
+        clear_index: false,
+        index_info: false,
+        verify_index: false,
+        merge_duplicate_edges: true,
+        hide_method_nodes: true,
     };
     
     // 运行分析
@@ -85,6 +97,12 @@ fn test_end_to_end_error_handling() {
         output_format: OutputFormat::Dot,
         max_depth: 10,
         log_level: LogLevel::Error,
+        rebuild_index: false,
+        clear_index: false,
+        index_info: false,
+        verify_index: false,
+        merge_duplicate_edges: true,
+        hide_method_nodes: true,
     };
     assert!(run(args).is_err());
     
@@ -98,6 +116,12 @@ fn test_end_to_end_error_handling() {
         output_format: OutputFormat::Dot,
         max_depth: 10,
         log_level: LogLevel::Error,
+        rebuild_index: false,
+        clear_index: false,
+        index_info: false,
+        verify_index: false,
+        merge_duplicate_edges: true,
+        hide_method_nodes: true,
     };
     assert!(run(args).is_err());
 }

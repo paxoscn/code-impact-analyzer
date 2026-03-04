@@ -42,6 +42,14 @@ pub struct CliArgs {
     /// 验证索引有效性并退出
     #[arg(long = "verify-index")]
     pub verify_index: bool,
+    
+    /// 是否合并相同边（默认启用）
+    #[arg(long = "merge-edges", default_value = "true")]
+    pub merge_duplicate_edges: bool,
+    
+    /// 是否隐藏方法调用节点（默认启用）
+    #[arg(long = "hide-methods", default_value = "false")]
+    pub hide_method_nodes: bool,
 }
 
 /// 输出格式枚举

@@ -357,7 +357,10 @@ index 1234567..abcdefg 100644
   - `RestTemplate`, `HttpClient`, `WebClient`
   - **Spring Cloud OpenFeign**: `@FeignClient` 注解支持，自动组合服务名称、基础路径和方法路径
 - **Kafka**: `KafkaProducer`, `KafkaTemplate`, `@KafkaListener`
-- **数据库**: JPA (`@Entity`, `@Table`), JDBC, MyBatis
+- **数据库**: 
+  - JPA (`@Entity`, `@Table`), JDBC
+  - **MyBatis Mapper**: 自动识别以 `Mapper` 结尾的接口，根据返回类型判断读写操作（详见 [MAPPER_DB_OPERATIONS.md](MAPPER_DB_OPERATIONS.md)）
+  - SQL 语句匹配（INSERT, UPDATE, DELETE, SELECT）
 - **Redis**: `RedisTemplate`
 
 ### Rust
@@ -399,6 +402,53 @@ public interface BasicInfoFeign {
 - 在影响分析中包含微服务间的依赖关系
 
 详细文档请参考：[FEIGN_CLIENT_SUPPORT.md](FEIGN_CLIENT_SUPPORT.md)
+
+## MyBatis Mapper 支持
+
+工具支持自动识别 MyBatis Mapper 接口的数据库操作，无需解析 XML 映射文件或注解。
+
+### 功能说明
+
+对于以 `Mapper` 结尾的接口，解析器会：
+
+1. 自动识别为数据库操作接口
+2. 提取表名：类名去掉 `Mapper` 后缀（如 `UserMapper` → `User` 表）
+3. 根据方法返回类型判断操作类型：
+   - 返回 `void` 或 `int`：写操作
+   - 返回其他类型（对象、List、数组等）：读操作
+
+### 示例
+
+```java
+public interface UserMapper {
+    // 写操作
+    void insertUser(User user);
+    int updateUser(User user);
+    int deleteUser(Long id);
+    
+    // 读操作
+    User selectUserById(Long id);
+    List<User> selectAllUsers();
+    User[] selectUsersByRole(String role);
+}
+```
+
+解析结果：
+- `insertUser`: 写操作 → `User` 表
+- `updateUser`: 写操作 → `User` 表
+- `deleteUser`: 写操作 → `User` 表
+- `selectUserById`: 读操作 → `User` 表
+- `selectAllUsers`: 读操作 → `User` 表
+- `selectUsersByRole`: 读操作 → `User` 表
+
+### 优势
+
+- 无需解析 XML 映射文件
+- 无需解析 MyBatis 注解（`@Select`, `@Insert` 等）
+- 快速识别数据库操作和影响的表
+- 适用于大多数 MyBatis 项目的命名规范
+
+详细文档请参考：[MAPPER_DB_OPERATIONS.md](MAPPER_DB_OPERATIONS.md)
 
 ## 配置文件支持
 

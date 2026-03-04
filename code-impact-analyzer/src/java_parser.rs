@@ -494,6 +494,9 @@ impl JavaParser {
     ) -> Vec<MethodInfo> {
         let mut methods = Vec::new();
         
+        // 提取简单类名（不含包名）
+        let simple_class_name = class_name.split('.').last().unwrap_or(class_name);
+        
         // 查找类体或接口体
         let mut cursor = class_node.walk();
         for child in class_node.children(&mut cursor) {
@@ -502,7 +505,7 @@ impl JavaParser {
                 for body_child in child.children(&mut body_cursor) {
                     // 处理普通方法声明和接口方法声明
                     if body_child.kind() == "method_declaration" {
-                        if let Some(method_info) = self.extract_method_info(source, file_path, body_child, class_name, tree, feign_client_info, class_request_mapping, app_config) {
+                        if let Some(method_info) = self.extract_method_info(source, file_path, body_child, class_name, simple_class_name, tree, feign_client_info, class_request_mapping, app_config) {
                             methods.push(method_info);
                         }
                     }
@@ -520,6 +523,7 @@ impl JavaParser {
         file_path: &Path,
         method_node: tree_sitter::Node,
         class_name: &str,
+        simple_class_name: &str,
         tree: &tree_sitter::Tree,
         feign_client_info: &Option<FeignClientInfo>,
         class_request_mapping: &Option<String>,
@@ -556,8 +560,11 @@ impl JavaParser {
         // 提取 Kafka 操作
         let kafka_operations = self.extract_kafka_operations(source, &method_node);
         
+        // 提取返回类型（用于Mapper类的数据库操作判断）
+        let return_type = self.extract_return_type(source, &method_node);
+        
         // 提取数据库操作
-        let db_operations = self.extract_db_operations(source, &method_node);
+        let db_operations = self.extract_db_operations(source, &method_node, simple_class_name, &return_type);
         
         // 提取 Redis 操作
         let redis_operations = self.extract_redis_operations(source, &method_node);
@@ -1038,26 +1045,73 @@ impl JavaParser {
     }
     
     /// 提取数据库操作
-    fn extract_db_operations(&self, source: &str, method_node: &tree_sitter::Node) -> Vec<DbOperation> {
+    fn extract_return_type(&self, source: &str, method_node: &tree_sitter::Node) -> Option<String> {
+        let mut cursor = method_node.walk();
+        
+        for child in method_node.children(&mut cursor) {
+            // 查找返回类型节点
+            if child.kind() == "void_type" {
+                return Some("void".to_string());
+            } else if child.kind() == "type_identifier" || child.kind() == "integral_type" {
+                if let Some(text) = source.get(child.byte_range()) {
+                    return Some(text.to_string());
+                }
+            } else if child.kind() == "generic_type" {
+                // 处理泛型类型，如 List<User>
+                if let Some(text) = source.get(child.byte_range()) {
+                    return Some(text.to_string());
+                }
+            } else if child.kind() == "array_type" {
+                // 处理数组类型，如 User[]
+                if let Some(text) = source.get(child.byte_range()) {
+                    return Some(text.to_string());
+                }
+            }
+        }
+        
+        None
+    }
+    
+    fn extract_db_operations(&self, source: &str, method_node: &tree_sitter::Node, class_name: &str, return_type: &Option<String>) -> Vec<DbOperation> {
         let mut operations = Vec::new();
         
-        if let Some(text) = source.get(method_node.byte_range()) {
-            // 查找 SQL 语句
-            let sql_patterns = vec![
-                (Regex::new(r"(?i)SELECT\s+.+?\s+FROM\s+(\w+)").unwrap(), DbOpType::Select),
-                (Regex::new(r"(?i)INSERT\s+INTO\s+(\w+)").unwrap(), DbOpType::Insert),
-                (Regex::new(r"(?i)UPDATE\s+(\w+)\s+SET").unwrap(), DbOpType::Update),
-                (Regex::new(r"(?i)DELETE\s+FROM\s+(\w+)").unwrap(), DbOpType::Delete),
-            ];
+        // 检查类名是否以Mapper结尾
+        if class_name.ends_with("Mapper") {
+            // 提取表名：去掉Mapper后缀
+            let table_name = class_name.strip_suffix("Mapper").unwrap_or(class_name);
             
-            for (pattern, op_type) in sql_patterns {
-                for cap in pattern.captures_iter(text) {
-                    if let Some(table) = cap.get(1) {
-                        operations.push(DbOperation {
-                            operation_type: op_type.clone(),
-                            table: table.as_str().to_string(),
-                            line: method_node.start_position().row + 1,
-                        });
+            // 根据返回类型判断操作类型
+            // void或int为写操作，其他为读操作
+            let op_type = match return_type.as_deref() {
+                Some("void") | Some("int") => DbOpType::Update, // 写操作统一用Update表示
+                _ => DbOpType::Select, // 读操作用Select表示
+            };
+            
+            operations.push(DbOperation {
+                operation_type: op_type,
+                table: table_name.to_string(),
+                line: method_node.start_position().row + 1,
+            });
+        } else {
+            // 保留原有的SQL匹配逻辑（用于非Mapper类）
+            if let Some(text) = source.get(method_node.byte_range()) {
+                // 查找 SQL 语句
+                let sql_patterns = vec![
+                    (Regex::new(r"(?i)SELECT\s+.+?\s+FROM\s+(\w+)").unwrap(), DbOpType::Select),
+                    (Regex::new(r"(?i)INSERT\s+INTO\s+(\w+)").unwrap(), DbOpType::Insert),
+                    (Regex::new(r"(?i)UPDATE\s+(\w+)\s+SET").unwrap(), DbOpType::Update),
+                    (Regex::new(r"(?i)DELETE\s+FROM\s+(\w+)").unwrap(), DbOpType::Delete),
+                ];
+                
+                for (pattern, op_type) in sql_patterns {
+                    for cap in pattern.captures_iter(text) {
+                        if let Some(table) = cap.get(1) {
+                            operations.push(DbOperation {
+                                operation_type: op_type.clone(),
+                                table: table.as_str().to_string(),
+                                line: method_node.start_position().row + 1,
+                            });
+                        }
                     }
                 }
             }
@@ -1867,4 +1921,205 @@ mod tests {
         // 使用 name 属性时，应该正常工作
         assert_eq!(http.path, "order-service/orders/update");
     }
+    
+    #[test]
+    fn test_extract_mapper_db_operations() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+            package com.example.mapper;
+            
+            import java.util.List;
+            
+            public interface UserMapper {
+                // 写操作：返回void
+                void insertUser(User user);
+                
+                // 写操作：返回int
+                int updateUser(User user);
+                
+                // 读操作：返回对象
+                User selectUserById(Long id);
+                
+                // 读操作：返回List
+                List<User> selectAllUsers();
+                
+                // 读操作：返回数组
+                User[] selectUserArray();
+            }
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("UserMapper.java")).unwrap();
+        assert_eq!(result.classes.len(), 1);
+        assert_eq!(result.classes[0].methods.len(), 5);
+        
+        // 检查 insertUser - 写操作
+        let insert_method = &result.classes[0].methods[0];
+        assert_eq!(insert_method.name, "insertUser");
+        assert_eq!(insert_method.db_operations.len(), 1);
+        assert_eq!(insert_method.db_operations[0].operation_type, DbOpType::Update);
+        assert_eq!(insert_method.db_operations[0].table, "User");
+        
+        // 检查 updateUser - 写操作
+        let update_method = &result.classes[0].methods[1];
+        assert_eq!(update_method.name, "updateUser");
+        assert_eq!(update_method.db_operations.len(), 1);
+        assert_eq!(update_method.db_operations[0].operation_type, DbOpType::Update);
+        assert_eq!(update_method.db_operations[0].table, "User");
+        
+        // 检查 selectUserById - 读操作
+        let select_method = &result.classes[0].methods[2];
+        assert_eq!(select_method.name, "selectUserById");
+        assert_eq!(select_method.db_operations.len(), 1);
+        assert_eq!(select_method.db_operations[0].operation_type, DbOpType::Select);
+        assert_eq!(select_method.db_operations[0].table, "User");
+        
+        // 检查 selectAllUsers - 读操作
+        let select_all_method = &result.classes[0].methods[3];
+        assert_eq!(select_all_method.name, "selectAllUsers");
+        assert_eq!(select_all_method.db_operations.len(), 1);
+        assert_eq!(select_all_method.db_operations[0].operation_type, DbOpType::Select);
+        assert_eq!(select_all_method.db_operations[0].table, "User");
+        
+        // 检查 selectUserArray - 读操作
+        let select_array_method = &result.classes[0].methods[4];
+        assert_eq!(select_array_method.name, "selectUserArray");
+        assert_eq!(select_array_method.db_operations.len(), 1);
+        assert_eq!(select_array_method.db_operations[0].operation_type, DbOpType::Select);
+        assert_eq!(select_array_method.db_operations[0].table, "User");
+    }
 }
+
+
+    #[test]
+    fn test_extract_mapper_db_operations() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+            package com.example.mapper;
+            
+            public interface UserMapper {
+                // 读操作 - 返回User对象
+                User selectById(int id);
+                
+                // 读操作 - 返回List
+                List<User> selectAll();
+                
+                // 写操作 - 返回void
+                void insert(User user);
+                
+                // 写操作 - 返回int
+                int update(User user);
+                
+                // 写操作 - 返回int
+                int deleteById(int id);
+            }
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("UserMapper.java")).unwrap();
+        assert_eq!(result.classes.len(), 1);
+        assert_eq!(result.classes[0].methods.len(), 5);
+        
+        // 检查 selectById - 读操作
+        let select_by_id = &result.classes[0].methods[0];
+        assert_eq!(select_by_id.db_operations.len(), 1);
+        assert_eq!(select_by_id.db_operations[0].operation_type, DbOpType::Select);
+        assert_eq!(select_by_id.db_operations[0].table, "User");
+        
+        // 检查 selectAll - 读操作
+        let select_all = &result.classes[0].methods[1];
+        assert_eq!(select_all.db_operations.len(), 1);
+        assert_eq!(select_all.db_operations[0].operation_type, DbOpType::Select);
+        assert_eq!(select_all.db_operations[0].table, "User");
+        
+        // 检查 insert - 写操作（void返回）
+        let insert = &result.classes[0].methods[2];
+        assert_eq!(insert.db_operations.len(), 1);
+        assert_eq!(insert.db_operations[0].operation_type, DbOpType::Update);
+        assert_eq!(insert.db_operations[0].table, "User");
+        
+        // 检查 update - 写操作（int返回）
+        let update = &result.classes[0].methods[3];
+        assert_eq!(update.db_operations.len(), 1);
+        assert_eq!(update.db_operations[0].operation_type, DbOpType::Update);
+        assert_eq!(update.db_operations[0].table, "User");
+        
+        // 检查 deleteById - 写操作（int返回）
+        let delete = &result.classes[0].methods[4];
+        assert_eq!(delete.db_operations.len(), 1);
+        assert_eq!(delete.db_operations[0].operation_type, DbOpType::Update);
+        assert_eq!(delete.db_operations[0].table, "User");
+    }
+    
+    #[test]
+    fn test_non_mapper_class_no_auto_db_operations() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+            package com.example.service;
+            
+            public class UserService {
+                // 非Mapper类的方法不应该自动识别为数据库操作
+                User findById(int id) {
+                    return null;
+                }
+                
+                void save(User user) {
+                    // do something
+                }
+            }
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("UserService.java")).unwrap();
+        assert_eq!(result.classes.len(), 1);
+        assert_eq!(result.classes[0].methods.len(), 2);
+        
+        // 非Mapper类的方法不应该有数据库操作
+        let find_method = &result.classes[0].methods[0];
+        assert_eq!(find_method.db_operations.len(), 0);
+        
+        let save_method = &result.classes[0].methods[1];
+        assert_eq!(save_method.db_operations.len(), 0);
+    }
+
+
+    #[test]
+    fn test_extract_mapper_with_full_package_name() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+            package com.example.dao;
+            
+            import java.util.List;
+            
+            public interface OrderMapper {
+                // 读操作
+                Order findById(Long id);
+                
+                // 读操作 - 返回泛型List
+                List<Order> findAll();
+                
+                // 写操作 - 返回void
+                void insertOrder(Order order);
+                
+                // 写操作 - 返回int（影响行数）
+                int updateOrder(Order order);
+            }
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("OrderMapper.java")).unwrap();
+        assert_eq!(result.classes.len(), 1);
+        
+        // 验证类名包含完整包名
+        assert_eq!(result.classes[0].name, "com.example.dao.OrderMapper");
+        
+        // 验证所有方法都有数据库操作
+        assert_eq!(result.classes[0].methods.len(), 4);
+        
+        for method in &result.classes[0].methods {
+            assert_eq!(method.db_operations.len(), 1, "Method {} should have 1 db operation", method.name);
+            assert_eq!(method.db_operations[0].table, "Order", "Table name should be Order for method {}", method.name);
+        }
+        
+        // 验证读写操作类型
+        assert_eq!(result.classes[0].methods[0].db_operations[0].operation_type, DbOpType::Select);
+        assert_eq!(result.classes[0].methods[1].db_operations[0].operation_type, DbOpType::Select);
+        assert_eq!(result.classes[0].methods[2].db_operations[0].operation_type, DbOpType::Update);
+        assert_eq!(result.classes[0].methods[3].db_operations[0].operation_type, DbOpType::Update);
+    }

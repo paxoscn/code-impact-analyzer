@@ -1044,28 +1044,30 @@ impl<'a> ImpactTracer<'a> {
                         Direction::Upstream,
                     );
                     
-                    // 查找所有写入该表的方法
-                    let writers = self.index.find_db_writers(&db_op.table);
-                    for writer in writers {
-                        if !visited.contains(writer) {
-                            // 添加写入者节点
-                            let writer_node = ImpactNode::method(writer.to_string());
-                            let writer_id = writer_node.id.clone();
-                            graph.add_node(writer_node);
+                    // 暂不关心写入
+                    // // 查找所有写入该表的方法
+                    // let writers = self.index.find_db_writers(&db_op.table);
+                    // for writer in writers {
+                    //     println!("writer {}", writer);
+                    //     if !visited.contains(writer) {
+                    //         // 添加写入者节点
+                    //         let writer_node = ImpactNode::method(writer.to_string());
+                    //         let writer_id = writer_node.id.clone();
+                    //         graph.add_node(writer_node);
                             
-                            // 添加边：writer -> table
-                            graph.add_edge(
-                                &writer_id,
-                                &table_id,
-                                EdgeType::DatabaseReadWrite,
-                                Direction::Upstream,
-                            );
+                    //         // 添加边：writer -> table
+                    //         graph.add_edge(
+                    //             &writer_id,
+                    //             &table_id,
+                    //             EdgeType::DatabaseReadWrite,
+                    //             Direction::Upstream,
+                    //         );
                             
-                            // 继续追溯写入者的上游
-                            let mut writer_visited = visited.clone();
-                            self.trace_method_upstream(writer, 0, &mut writer_visited, graph);
-                        }
-                    }
+                    //         // 继续追溯写入者的上游
+                    //         let mut writer_visited = visited.clone();
+                    //         self.trace_method_upstream(writer, 0, &mut writer_visited, graph);
+                    //     }
+                    // }
                 }
                 DbOpType::Insert | DbOpType::Update | DbOpType::Delete => {
                     // 当前方法写入表

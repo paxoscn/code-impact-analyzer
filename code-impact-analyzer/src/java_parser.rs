@@ -67,6 +67,10 @@ pub struct JavaParser {
     parser: Mutex<Parser>,
 }
 
+/// 方法返回类型映射
+/// 用于在推断参数类型时查找方法的返回类型
+type MethodReturnTypeMap = std::collections::HashMap<String, String>;
+
 impl JavaParser {
     /// 创建新的 JavaParser 实例
     pub fn new() -> Result<Self, ParseError> {
@@ -625,6 +629,82 @@ impl JavaParser {
         })
     }
     
+    /// 提取方法信息（带返回类型映射）
+    fn extract_method_info_with_return_types(
+        &self,
+        source: &str,
+        file_path: &Path,
+        method_node: tree_sitter::Node,
+        class_name: &str,
+        simple_class_name: &str,
+        tree: &tree_sitter::Tree,
+        feign_client_info: &Option<FeignClientInfo>,
+        class_request_mapping: &Option<String>,
+        app_config: &ApplicationConfig,
+        method_return_types: &MethodReturnTypeMap,
+    ) -> Option<MethodInfo> {
+        // 查找方法名
+        let mut cursor = method_node.walk();
+        let mut method_name = None;
+        
+        for child in method_node.children(&mut cursor) {
+            if child.kind() == "identifier" {
+                if let Some(text) = source.get(child.byte_range()) {
+                    method_name = Some(text.to_string());
+                    break;
+                }
+            }
+        }
+        
+        let name = method_name?;
+        let line_start = method_node.start_position().row + 1;
+        let line_end = method_node.end_position().row + 1;
+        
+        // 提取参数类型列表
+        let param_types = self.extract_parameter_types(source, &method_node);
+        
+        // 构建完整的方法签名：ClassName::methodName(Type1,Type2,...)
+        let full_qualified_name = if param_types.is_empty() {
+            format!("{}::{}()", class_name, name)
+        } else {
+            format!("{}::{}({})", class_name, name, param_types.join(","))
+        };
+        
+        // 提取方法调用（传入返回类型映射）
+        let calls = self.extract_method_calls_with_return_types(source, &method_node, tree, method_return_types);
+        
+        // 提取 HTTP 注解（如果是 FeignClient，需要组合类级别和方法级别的注解）
+        let http_annotations = if let Some(feign_info) = feign_client_info {
+            self.extract_feign_http_annotation(source, &method_node, feign_info)
+        } else {
+            self.extract_http_annotations(source, &method_node, class_request_mapping, app_config)
+        };
+        
+        // 提取 Kafka 操作
+        let kafka_operations = self.extract_kafka_operations(source, &method_node);
+        
+        // 提取返回类型（用于Mapper类的数据库操作判断）
+        let return_type = self.extract_return_type(source, &method_node);
+        
+        // 提取数据库操作
+        let db_operations = self.extract_db_operations(source, &method_node, simple_class_name, &return_type);
+        
+        // 提取 Redis 操作
+        let redis_operations = self.extract_redis_operations(source, &method_node);
+        
+        Some(MethodInfo {
+            name,
+            full_qualified_name,
+            file_path: file_path.to_path_buf(),
+            line_range: (line_start, line_end),
+            calls,
+            http_annotations,
+            kafka_operations,
+            db_operations,
+            redis_operations,
+        })
+    }
+    
     /// 提取方法参数类型列表
     fn extract_parameter_types(&self, source: &str, method_node: &tree_sitter::Node) -> Vec<String> {
         let mut param_types = Vec::new();
@@ -694,6 +774,13 @@ impl JavaParser {
     /// 提取方法调用
 
     fn extract_method_calls(&self, source: &str, method_node: &tree_sitter::Node, tree: &tree_sitter::Tree) -> Vec<MethodCall> {
+        // 使用空的返回类型映射（向后兼容）
+        let empty_map = MethodReturnTypeMap::new();
+        self.extract_method_calls_with_return_types(source, method_node, tree, &empty_map)
+    }
+    
+    /// 提取方法调用（带返回类型映射）
+    fn extract_method_calls_with_return_types(&self, source: &str, method_node: &tree_sitter::Node, tree: &tree_sitter::Tree, method_return_types: &MethodReturnTypeMap) -> Vec<MethodCall> {
         let mut calls = Vec::new();
         
         // 提取导入语句，建立简单类名到完整类名的映射
@@ -702,7 +789,7 @@ impl JavaParser {
         // 提取类中的字段声明和方法内的本地变量，建立变量名到类型的映射
         let field_types = self.extract_field_types(source, method_node, tree);
         
-        self.walk_node_for_calls(source, *method_node, &mut calls, &field_types, &import_map);
+        self.walk_node_for_calls_with_return_types(source, *method_node, &mut calls, &field_types, &import_map, method_return_types);
         calls
     }
     
@@ -988,6 +1075,21 @@ impl JavaParser {
         field_types: &std::collections::HashMap<String, String>,
         import_map: &std::collections::HashMap<String, String>,
     ) {
+        // 使用空的返回类型映射（向后兼容）
+        let empty_map = MethodReturnTypeMap::new();
+        self.walk_node_for_calls_with_return_types(source, node, calls, field_types, import_map, &empty_map);
+    }
+    
+    /// 递归遍历节点查找方法调用（带返回类型映射）
+    fn walk_node_for_calls_with_return_types(
+        &self,
+        source: &str,
+        node: tree_sitter::Node,
+        calls: &mut Vec<MethodCall>,
+        field_types: &std::collections::HashMap<String, String>,
+        import_map: &std::collections::HashMap<String, String>,
+        method_return_types: &MethodReturnTypeMap,
+    ) {
         if node.kind() == "method_invocation" {
             // 查找方法调用的对象和方法名
             let mut cursor = node.walk();
@@ -1012,9 +1114,9 @@ impl JavaParser {
             
             let line = node.start_position().row + 1;
             
-            // 提取参数类型
+            // 提取参数类型（传入返回类型映射）
             let arg_types = if let Some(arg_node) = argument_list_node {
-                self.extract_argument_types(source, &arg_node, field_types, import_map)
+                self.extract_argument_types_with_return_types(source, &arg_node, field_types, import_map, method_return_types)
             } else {
                 Vec::new()
             };
@@ -1096,7 +1198,7 @@ impl JavaParser {
         
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            self.walk_node_for_calls(source, child, calls, field_types, import_map);
+            self.walk_node_for_calls_with_return_types(source, child, calls, field_types, import_map, method_return_types);
         }
     }
     
@@ -1108,6 +1210,20 @@ impl JavaParser {
         field_types: &std::collections::HashMap<String, String>,
         import_map: &std::collections::HashMap<String, String>,
     ) -> Vec<String> {
+        // 使用空的返回类型映射（向后兼容）
+        let empty_map = MethodReturnTypeMap::new();
+        self.extract_argument_types_with_return_types(source, argument_list_node, field_types, import_map, &empty_map)
+    }
+    
+    /// 提取方法调用的参数类型（带返回类型映射）
+    fn extract_argument_types_with_return_types(
+        &self,
+        source: &str,
+        argument_list_node: &tree_sitter::Node,
+        field_types: &std::collections::HashMap<String, String>,
+        import_map: &std::collections::HashMap<String, String>,
+        method_return_types: &MethodReturnTypeMap,
+    ) -> Vec<String> {
         let mut arg_types = Vec::new();
         let mut cursor = argument_list_node.walk();
         
@@ -1117,8 +1233,8 @@ impl JavaParser {
                 continue;
             }
             
-            // 推断参数类型
-            if let Some(arg_type) = self.infer_argument_type(source, &child, field_types, import_map) {
+            // 推断参数类型（传入返回类型映射）
+            if let Some(arg_type) = self.infer_argument_type_with_return_types(source, &child, field_types, import_map, method_return_types) {
                 arg_types.push(arg_type);
             }
         }
@@ -1133,6 +1249,20 @@ impl JavaParser {
         arg_node: &tree_sitter::Node,
         field_types: &std::collections::HashMap<String, String>,
         import_map: &std::collections::HashMap<String, String>,
+    ) -> Option<String> {
+        // 使用空的返回类型映射（向后兼容）
+        let empty_map = MethodReturnTypeMap::new();
+        self.infer_argument_type_with_return_types(source, arg_node, field_types, import_map, &empty_map)
+    }
+    
+    /// 推断参数的类型（带返回类型映射）
+    fn infer_argument_type_with_return_types(
+        &self,
+        source: &str,
+        arg_node: &tree_sitter::Node,
+        field_types: &std::collections::HashMap<String, String>,
+        import_map: &std::collections::HashMap<String, String>,
+        method_return_types: &MethodReturnTypeMap,
     ) -> Option<String> {
         match arg_node.kind() {
             // 字符串字面量
@@ -1191,11 +1321,11 @@ impl JavaParser {
                 Some("Object".to_string())
             }
             
-            // 方法调用：obj.method()
+            // 方法调用：obj.method() 或 method()
             "method_invocation" => {
-                // 尝试推断方法返回类型
-                // 这里简化处理，返回 Object
-                Some("Object".to_string())
+                // 尝试推断方法返回类型（使用返回类型映射）
+                self.infer_method_return_type_with_map(source, arg_node, field_types, import_map, method_return_types)
+                    .or(Some("Object".to_string()))
             }
             
             // 对象创建：new ClassName() 或 new ClassName<T>()
@@ -1285,6 +1415,69 @@ impl JavaParser {
                 Some("Object".to_string())
             }
         }
+    }
+    
+    /// 尝试推断方法调用的返回类型（使用返回类型映射）
+    fn infer_method_return_type_with_map(
+        &self,
+        source: &str,
+        method_invocation_node: &tree_sitter::Node,
+        field_types: &std::collections::HashMap<String, String>,
+        import_map: &std::collections::HashMap<String, String>,
+        method_return_types: &MethodReturnTypeMap,
+    ) -> Option<String> {
+        // 提取方法名和对象类型
+        let mut cursor = method_invocation_node.walk();
+        let mut identifiers = Vec::new();
+        let mut argument_list_node = None;
+        
+        for child in method_invocation_node.children(&mut cursor) {
+            if child.kind() == "identifier" {
+                if let Some(text) = source.get(child.byte_range()) {
+                    identifiers.push(text.to_string());
+                }
+            } else if child.kind() == "argument_list" {
+                argument_list_node = Some(child);
+            }
+        }
+        
+        if identifiers.is_empty() {
+            return None;
+        }
+        
+        // 提取参数类型
+        let arg_types = if let Some(arg_node) = argument_list_node {
+            self.extract_argument_types_with_return_types(source, &arg_node, field_types, import_map, method_return_types)
+        } else {
+            Vec::new()
+        };
+        
+        // 对于 obj.method() 形式
+        if identifiers.len() >= 2 {
+            let object_name = &identifiers[0];
+            let method_name = &identifiers[identifiers.len() - 1];
+            
+            // 获取对象的类型
+            if let Some(class_type) = field_types.get(object_name) {
+                // 尝试将简单类名转换为完整类名
+                let full_class_name = import_map.get(class_type)
+                    .unwrap_or(class_type);
+                
+                // 构建方法签名
+                let method_signature = if arg_types.is_empty() {
+                    format!("{}::{}()", full_class_name, method_name)
+                } else {
+                    format!("{}::{}({})", full_class_name, method_name, arg_types.join(","))
+                };
+                
+                // 从映射中查找返回类型
+                if let Some(return_type) = method_return_types.get(&method_signature) {
+                    return Some(return_type.clone());
+                }
+            }
+        }
+        
+        None
     }
 
     
@@ -1664,7 +1857,20 @@ impl LanguageParser for JavaParser {
                 message: "Failed to parse Java file".to_string(),
             })?;
         
-        let classes = self.extract_classes(content, file_path, &tree);
+        // 第一遍：提取类和方法，建立方法返回类型映射
+        let (mut classes, method_return_types) = self.extract_classes_with_return_types(content, file_path, &tree);
+        
+        // 第二遍：使用返回类型映射重新提取方法调用
+        for class in &mut classes {
+            for method in &mut class.methods {
+                // 找到对应的方法节点并重新提取调用
+                let root_node = tree.root_node();
+                if let Some(method_node) = self.find_method_node(content, &root_node, &class.name, &method.name, &method.full_qualified_name) {
+                    method.calls = self.extract_method_calls_with_return_types(content, &method_node, &tree, &method_return_types);
+                }
+            }
+        }
+        
         let imports = self.extract_imports(content, &tree);
         
         Ok(ParsedFile {
@@ -1674,6 +1880,262 @@ impl LanguageParser for JavaParser {
             functions: vec![], // Java 使用类和方法，不使用顶层函数
             imports,
         })
+    }
+}
+
+// Helper methods for JavaParser (not part of LanguageParser trait)
+impl JavaParser {
+    /// 查找指定方法的节点
+    fn find_method_node<'a>(
+        &self,
+        source: &str,
+        node: &tree_sitter::Node<'a>,
+        class_name: &str,
+        method_name: &str,
+        full_qualified_name: &str,
+    ) -> Option<tree_sitter::Node<'a>> {
+        // 递归查找类节点
+        if node.kind() == "class_declaration" || node.kind() == "interface_declaration" {
+            // 检查是否是目标类
+            if let Some(found_class_name) = self.extract_class_name(source, node) {
+                let package_name = self.extract_package_name_from_node(source, node);
+                let full_class_name = if let Some(pkg) = package_name {
+                    format!("{}.{}", pkg, found_class_name)
+                } else {
+                    found_class_name.clone()
+                };
+                
+                if full_class_name == class_name {
+                    // 在类体中查找方法
+                    let mut cursor = node.walk();
+                    for child in node.children(&mut cursor) {
+                        if child.kind() == "class_body" || child.kind() == "interface_body" {
+                            let mut body_cursor = child.walk();
+                            for body_child in child.children(&mut body_cursor) {
+                                if body_child.kind() == "method_declaration" {
+                                    // 检查方法名和签名
+                                    if let Some(found_method_name) = self.extract_method_name(source, &body_child) {
+                                        if found_method_name == method_name {
+                                            // 验证完整签名
+                                            let param_types = self.extract_parameter_types(source, &body_child);
+                                            let found_signature = if param_types.is_empty() {
+                                                format!("{}::{}()", class_name, found_method_name)
+                                            } else {
+                                                format!("{}::{}({})", class_name, found_method_name, param_types.join(","))
+                                            };
+                                            
+                                            if found_signature == full_qualified_name {
+                                                return Some(body_child);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 递归查找子节点
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if let Some(found) = self.find_method_node(source, &child, class_name, method_name, full_qualified_name) {
+                return Some(found);
+            }
+        }
+        
+        None
+    }
+    
+    /// 从节点向上查找包名
+    fn extract_package_name_from_node(&self, source: &str, node: &tree_sitter::Node) -> Option<String> {
+        // 向上查找到根节点
+        let mut current = Some(*node);
+        while let Some(n) = current {
+            if n.parent().is_none() {
+                // 找到根节点，在其子节点中查找 package_declaration
+                let mut cursor = n.walk();
+                for child in n.children(&mut cursor) {
+                    if child.kind() == "package_declaration" {
+                        let mut pkg_cursor = child.walk();
+                        for pkg_child in child.children(&mut pkg_cursor) {
+                            if pkg_child.kind() == "scoped_identifier" || pkg_child.kind() == "identifier" {
+                                if let Some(text) = source.get(pkg_child.byte_range()) {
+                                    return Some(text.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+            current = n.parent();
+        }
+        None
+    }
+    
+    /// 提取类名（不含包名）
+    fn extract_class_name(&self, source: &str, class_node: &tree_sitter::Node) -> Option<String> {
+        let mut cursor = class_node.walk();
+        for child in class_node.children(&mut cursor) {
+            if child.kind() == "identifier" {
+                if let Some(text) = source.get(child.byte_range()) {
+                    return Some(text.to_string());
+                }
+            }
+        }
+        None
+    }
+    /// 提取类信息，同时建立方法返回类型映射
+    fn extract_classes_with_return_types(&self, source: &str, file_path: &Path, tree: &tree_sitter::Tree) -> (Vec<ClassInfo>, MethodReturnTypeMap) {
+        let mut classes = Vec::new();
+        let mut method_return_types = MethodReturnTypeMap::new();
+        let root_node = tree.root_node();
+        
+        self.walk_node_for_classes_with_return_types(source, file_path, root_node, &mut classes, &mut method_return_types, tree);
+        
+        (classes, method_return_types)
+    }
+    
+    /// 递归遍历节点查找类声明，同时收集方法返回类型
+    fn walk_node_for_classes_with_return_types(
+        &self,
+        source: &str,
+        file_path: &Path,
+        node: tree_sitter::Node,
+        classes: &mut Vec<ClassInfo>,
+        method_return_types: &mut MethodReturnTypeMap,
+        tree: &tree_sitter::Tree,
+    ) {
+        if node.kind() == "class_declaration" || node.kind() == "interface_declaration" {
+            if let Some(class_info) = self.extract_class_info_with_return_types(source, file_path, node, tree, method_return_types) {
+                classes.push(class_info);
+            }
+        }
+        
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            self.walk_node_for_classes_with_return_types(source, file_path, child, classes, method_return_types, tree);
+        }
+    }
+    
+    /// 提取类信息，同时收集方法返回类型
+    fn extract_class_info_with_return_types(
+        &self,
+        source: &str,
+        file_path: &Path,
+        class_node: tree_sitter::Node,
+        tree: &tree_sitter::Tree,
+        method_return_types: &mut MethodReturnTypeMap,
+    ) -> Option<ClassInfo> {
+        // 先提取类的基本信息（不包含方法）
+        let class_info = self.extract_class_info(source, file_path, class_node, tree, &ApplicationConfig::default())?;
+        
+        // 然后提取方法，同时收集返回类型
+        let methods = self.extract_methods_with_return_types(
+            source,
+            file_path,
+            &class_node,
+            &class_info.name,
+            tree,
+            method_return_types,
+        );
+        
+        Some(ClassInfo {
+            name: class_info.name,
+            methods,
+            line_range: class_info.line_range,
+            is_interface: class_info.is_interface,
+            implements: class_info.implements,
+        })
+    }
+    
+    /// 提取方法，同时收集返回类型
+    fn extract_methods_with_return_types(
+        &self,
+        source: &str,
+        file_path: &Path,
+        class_node: &tree_sitter::Node,
+        class_name: &str,
+        tree: &tree_sitter::Tree,
+        method_return_types: &mut MethodReturnTypeMap,
+    ) -> Vec<MethodInfo> {
+        let mut methods = Vec::new();
+        
+        // 获取简单类名（用于Mapper判断）
+        let simple_class_name = class_name.split('.').last().unwrap_or(class_name);
+        
+        // 提取 FeignClient 注解
+        let feign_client_info = self.extract_feign_client_annotation(source, class_node);
+        
+        // 提取类级别的 @RequestMapping
+        let class_request_mapping = self.extract_class_level_request_mapping(source, class_node);
+        
+        // 加载应用配置
+        let app_config = self.load_application_config(file_path);
+        
+        // 查找类体或接口体
+        let mut cursor = class_node.walk();
+        for child in class_node.children(&mut cursor) {
+            if child.kind() == "class_body" || child.kind() == "interface_body" {
+                let mut body_cursor = child.walk();
+                for body_child in child.children(&mut body_cursor) {
+                    // 处理普通方法声明和接口方法声明
+                    if body_child.kind() == "method_declaration" {
+                        // 先收集返回类型
+                        if let Some(return_type) = self.extract_return_type(source, &body_child) {
+                            // 获取方法名
+                            if let Some(method_name) = self.extract_method_name(source, &body_child) {
+                                // 获取参数类型
+                                let param_types = self.extract_parameter_types(source, &body_child);
+                                
+                                // 构建方法签名
+                                let method_signature = if param_types.is_empty() {
+                                    format!("{}::{}()", class_name, method_name)
+                                } else {
+                                    format!("{}::{}({})", class_name, method_name, param_types.join(","))
+                                };
+                                
+                                // 存储返回类型
+                                method_return_types.insert(method_signature, return_type);
+                            }
+                        }
+                        
+                        // 然后提取完整的方法信息
+                        if let Some(method_info) = self.extract_method_info_with_return_types(
+                            source,
+                            file_path,
+                            body_child,
+                            class_name,
+                            simple_class_name,
+                            tree,
+                            &feign_client_info,
+                            &class_request_mapping,
+                            &app_config,
+                            method_return_types,
+                        ) {
+                            methods.push(method_info);
+                        }
+                    }
+                }
+            }
+        }
+        
+        methods
+    }
+    
+    /// 提取方法名
+    fn extract_method_name(&self, source: &str, method_node: &tree_sitter::Node) -> Option<String> {
+        let mut cursor = method_node.walk();
+        for child in method_node.children(&mut cursor) {
+            if child.kind() == "identifier" {
+                if let Some(text) = source.get(child.byte_range()) {
+                    return Some(text.to_string());
+                }
+            }
+        }
+        None
     }
 }
 
@@ -1917,6 +2379,81 @@ public class TestService {
         
         // 第二个调用：使用方法参数
         assert_eq!(method.calls[1].target, "com.example.UserRepository::findUser(String)");
+    }
+    
+    #[test]
+    fn test_extract_method_calls_with_nested_calls() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+package com.example;
+
+public class UserRepository {
+    public User findUser(String id) {
+        return null;
+    }
+}
+
+public class User {
+    public String getName() {
+        return null;
+    }
+}
+
+public class DataProcessor {
+    public void process(User user) {
+        // process
+    }
+    
+    public void process(String name) {
+        // process
+    }
+}
+
+public class TestService {
+    private UserRepository userRepository;
+    private DataProcessor processor;
+    
+    public void processData() {
+        // 嵌套方法调用：userRepository.findUser() 返回 User，应该推断为 User 类型
+        processor.process(userRepository.findUser("123"));
+        
+        // 链式调用：findUser() 返回 User，getName() 返回 String
+        processor.process(userRepository.findUser("456").getName());
+    }
+}
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("TestService.java")).unwrap();
+        
+        assert_eq!(result.classes.len(), 4);
+        
+        // 找到 TestService 类
+        let test_service = result.classes.iter()
+            .find(|c| c.name == "com.example.TestService")
+            .expect("Should find TestService class");
+        
+        assert_eq!(test_service.methods.len(), 1);
+        let method = &test_service.methods[0];
+        
+        // 打印调用以便调试
+        for (i, call) in method.calls.iter().enumerate() {
+            eprintln!("Call {}: {}", i, call.target);
+        }
+        
+        // 验证方法调用
+        assert!(method.calls.len() >= 2, "Should have at least 2 method calls");
+        
+        // 第一个调用应该推断出 User 类型（从 findUser 的返回类型）
+        let first_process_call = method.calls.iter()
+            .find(|c| c.target.starts_with("com.example.DataProcessor::process"))
+            .expect("Should find process call");
+        
+        // 验证：应该是 process(User) 而不是 process(Object)
+        assert_eq!(
+            first_process_call.target,
+            "com.example.DataProcessor::process(User)",
+            "Should infer User type from findUser() return type"
+        );
     }
 
     

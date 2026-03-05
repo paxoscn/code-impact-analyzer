@@ -2,7 +2,7 @@
 
 ## 概述
 
-为了准确区分Java中的重载方法，我们修改了方法标识符和方法调用的格式，使其包含完整的方法签名（类名 + 方法名 + 参数类型列表）。为了简化签名并提高匹配准确性，泛型信息被移除。
+为了准确区分Java中的重载方法，我们修改了方法标识符和方法调用的格式，使其包含完整的方法签名（类名 + 方法名 + 参数类型列表）。为了简化签名并提高匹配准确性，泛型信息被移除。此外，实现了方法返回类型推断，用于嵌套方法调用的参数类型推断。
 
 ## 修改内容
 
@@ -77,9 +77,62 @@ list.add(new ArrayList<String>())
 
 所有这些变量在方法调用时都能正确推断其类型。
 
-### 3. 代码修改
+### 4. 方法返回类型推断（新功能）
 
-#### 3.1 新增辅助函数
+实现了同文件内的方法返回类型推断，用于嵌套方法调用的参数类型推断。
+
+**工作原理：**
+
+采用两遍解析策略：
+
+1. **第一遍**：提取所有类和方法，建立方法返回类型映射
+   - 遍历所有类和方法
+   - 提取每个方法的返回类型
+   - 建立映射：`方法签名 -> 返回类型`
+
+2. **第二遍**：使用返回类型映射重新提取方法调用
+   - 对每个方法，使用返回类型映射推断嵌套调用的参数类型
+   - 当遇到 `foo.bar()` 作为参数时，查找 `bar()` 的返回类型
+
+**示例：**
+
+```java
+public class UserRepository {
+    public User findUser(String id) {
+        return null;
+    }
+}
+
+public class DataProcessor {
+    public void process(User user) {
+        // process
+    }
+}
+
+public class TestService {
+    private UserRepository userRepository;
+    private DataProcessor processor;
+    
+    public void processData() {
+        // 嵌套方法调用
+        processor.process(userRepository.findUser("123"));
+    }
+}
+```
+
+**推断结果：**
+- `userRepository.findUser("123")` 的返回类型是 `User`
+- 因此 `processor.process(...)` 的调用被识别为 `DataProcessor::process(User)`
+- 而不是 `DataProcessor::process(Object)`
+
+**限制：**
+- 仅支持同文件内的方法返回类型推断
+- 跨文件的返回类型推断需要全局索引（未实现）
+- 链式调用（如 `foo.bar().baz()`）的中间返回类型推断有限
+
+### 5. 代码修改
+
+#### 5.1 新增辅助函数
 
 1. **`remove_generics`**: 移除类型中的泛型信息
    ```rust
@@ -259,6 +312,32 @@ Map::put(String,HashMap)      // put("key", new HashMap<String, Integer>())
 5. 泛型数组也移除泛型：`List<String>[]` → `List[]`
 6. 对于基本类型和常用类型（如 `String`），不进行完整类名解析
 7. 方法调用的参数类型是推断的，可能不完全准确（如复杂表达式）
+
+## 当前限制
+
+### 1. 嵌套方法调用的返回类型推断
+
+对于嵌套的方法调用（如 `go(foo.getBar())`），当前实现无法准确推断 `foo.getBar()` 的返回类型，会将其推断为 `Object`。
+
+**示例：**
+```java
+processor.process(userRepository.findUser("123"));
+// 实际：processor.process(Object)
+// 理想：processor.process(User)  // 如果 findUser 返回 User
+```
+
+**原因：**
+- 需要完整的类型系统和方法索引来查找方法的返回类型
+- 需要跨文件的类型解析能力
+
+**影响：**
+- 对于重载方法，可能无法精确匹配到正确的方法签名
+- 但对于大多数情况（使用字面量、变量、对象创建作为参数），类型推断是准确的
+
+**未来改进：**
+- 建立方法返回类型的索引
+- 实现跨文件的类型解析
+- 支持泛型返回类型的推断
 
 ## 测试结果
 

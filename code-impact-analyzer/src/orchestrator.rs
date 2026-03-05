@@ -369,7 +369,7 @@ impl AnalysisOrchestrator {
             // 如果没有有效的索引，则构建新索引
             if project_index.is_none() {
                 let mut new_index = CodeIndex::new();
-                match new_index.index_project(&project_path, &self.parsers) {
+                match new_index.index_project_two_pass(&project_path, &self.parsers) {
                     Ok(_) => {
                         log::info!("项目索引构建成功: {}", project_name);
                         

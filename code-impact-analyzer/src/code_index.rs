@@ -78,6 +78,165 @@ impl CodeIndex {
         }
     }
     
+    /// 索引整个工作空间（两遍策略，支持跨文件类型推断）
+    /// 
+    /// 第一遍：快速解析所有文件，提取方法签名和返回类型
+    /// 第二遍：使用全局返回类型映射重新解析，推断跨文件的方法调用参数类型
+    /// 
+    /// # Arguments
+    /// * `workspace_path` - 工作空间根目录路径
+    /// * `parsers` - 语言解析器列表
+    /// 
+    /// # Returns
+    /// * `Ok(())` - 索引构建成功
+    /// * `Err(IndexError)` - 索引构建失败
+    pub fn index_workspace_two_pass(
+        &mut self,
+        workspace_path: &Path,
+        parsers: &[Box<dyn LanguageParser>],
+    ) -> Result<(), IndexError> {
+        log::info!("开始两遍索引工作空间...");
+        
+        // 收集所有源文件
+        let source_files = self.collect_source_files(workspace_path)?;
+        let total_files = source_files.len();
+        
+        log::info!("找到 {} 个源文件", total_files);
+        
+        // ===== 第一遍：快速解析，提取方法签名和返回类型 =====
+        log::info!("第一遍：提取方法签名和返回类型...");
+        
+        let pb1 = ProgressBar::new(total_files as u64);
+        pb1.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
+                .unwrap()
+                .progress_chars("=>-")
+        );
+        pb1.set_message("第一遍解析");
+        
+        let parsed_files_pass1: Vec<ParsedFile> = source_files
+            .par_iter()
+            .progress_with(pb1.clone())
+            .filter_map(|file_path| {
+                match self.parse_file(file_path, parsers) {
+                    Ok(parsed) => Some(parsed),
+                    Err(e) => {
+                        log::warn!("解析失败 {}: {}", file_path.display(), e);
+                        None
+                    }
+                }
+            })
+            .collect();
+        
+        pb1.finish_with_message(format!("第一遍完成：{}/{} 个文件", parsed_files_pass1.len(), total_files));
+        
+        // 构建全局返回类型映射
+        log::info!("构建全局返回类型映射...");
+        let mut global_return_types = rustc_hash::FxHashMap::default();
+        
+        for parsed_file in &parsed_files_pass1 {
+            for class in &parsed_file.classes {
+                for method in &class.methods {
+                    if let Some(return_type) = &method.return_type {
+                        global_return_types.insert(method.full_qualified_name.clone(), return_type.clone());
+                    }
+                }
+            }
+        }
+        
+        log::info!("全局返回类型映射包含 {} 个方法", global_return_types.len());
+        
+        // ===== 第二遍：使用全局返回类型映射重新解析 =====
+        log::info!("第二遍：使用全局类型信息重新解析...");
+        
+        let pb2 = ProgressBar::new(total_files as u64);
+        pb2.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] {bar:40.magenta/blue} {pos}/{len} {msg}")
+                .unwrap()
+                .progress_chars("=>-")
+        );
+        pb2.set_message("第二遍解析");
+        
+        // 找到 Java 解析器
+        let java_parser = parsers.iter()
+            .find(|p| p.language_name() == "java")
+            .ok_or_else(|| IndexError::UnsupportedLanguage {
+                file: workspace_path.to_path_buf(),
+            })?;
+        
+        // 将 Box<dyn LanguageParser> 转换为 &JavaParser
+        let java_parser_ref = java_parser.as_ref() as *const dyn LanguageParser as *const crate::java_parser::JavaParser;
+        let java_parser_concrete = unsafe { &*java_parser_ref };
+        
+        let parsed_files_pass2: Vec<ParsedFile> = source_files
+            .par_iter()
+            .progress_with(pb2.clone())
+            .filter_map(|file_path| {
+                // 只对 Java 文件使用两遍解析
+                if file_path.extension().and_then(|e| e.to_str()) == Some("java") {
+                    // 读取文件内容
+                    let content = match std::fs::read_to_string(file_path) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            log::warn!("读取文件失败 {}: {}", file_path.display(), e);
+                            return None;
+                        }
+                    };
+                    
+                    // 使用全局返回类型映射解析
+                    match java_parser_concrete.parse_file_with_global_types(&content, file_path, &global_return_types) {
+                        Ok(parsed) => Some(parsed),
+                        Err(e) => {
+                            log::warn!("第二遍解析失败 {}: {:?}", file_path.display(), e);
+                            None
+                        }
+                    }
+                } else {
+                    // 非 Java 文件使用第一遍的结果
+                    parsed_files_pass1.iter()
+                        .find(|p| p.file_path == *file_path)
+                        .cloned()
+                }
+            })
+            .collect();
+        
+        pb2.finish_with_message(format!("第二遍完成：{}/{} 个文件", parsed_files_pass2.len(), total_files));
+        
+        // ===== 构建索引 =====
+        log::info!("构建最终索引...");
+        
+        let index_pb = ProgressBar::new(parsed_files_pass2.len() as u64);
+        index_pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] {bar:40.green/blue} {pos}/{len} {msg}")
+                .unwrap()
+                .progress_chars("=>-")
+        );
+        index_pb.set_message("构建索引");
+        
+        for parsed_file in parsed_files_pass2 {
+            if let Err(e) = self.index_parsed_file(parsed_file) {
+                log::warn!("索引文件失败: {}", e);
+            }
+            index_pb.inc(1);
+        }
+        
+        index_pb.finish_with_message("索引构建完成");
+        
+        log::info!("两遍索引完成：");
+        log::info!("  - 方法总数: {}", self.methods.len());
+        log::info!("  - 方法调用关系: {}", self.method_calls.len());
+        log::info!("  - HTTP 提供者: {}", self.http_providers.len());
+        log::info!("  - HTTP 消费者: {}", self.http_consumers.len());
+        log::info!("  - Kafka 生产者: {}", self.kafka_producers.len());
+        log::info!("  - Kafka 消费者: {}", self.kafka_consumers.len());
+        log::info!("  - 接口实现关系: {}", self.interface_implementations.len());
+        
+        Ok(())
+    }
+    
     /// 索引整个工作空间
     /// 
     /// # Arguments
@@ -151,6 +310,167 @@ impl CodeIndex {
         index_pb.finish_with_message("索引构建完成");
         
         log::info!("索引构建完成：");
+        log::info!("  - 方法总数: {}", self.methods.len());
+        log::info!("  - 方法调用关系: {}", self.method_calls.len());
+        log::info!("  - HTTP 提供者: {}", self.http_providers.len());
+        log::info!("  - HTTP 消费者: {}", self.http_consumers.len());
+        log::info!("  - Kafka 生产者: {}", self.kafka_producers.len());
+        log::info!("  - Kafka 消费者: {}", self.kafka_consumers.len());
+        log::info!("  - 接口实现关系: {}", self.interface_implementations.len());
+        
+        Ok(())
+    }
+    
+    /// 索引单个项目（两遍策略，支持跨文件类型推断）
+    /// 
+    /// # Arguments
+    /// * `project_path` - 项目目录路径
+    /// * `parsers` - 语言解析器列表
+    /// 
+    /// # Returns
+    /// * `Ok(())` - 索引构建成功
+    /// * `Err(IndexError)` - 索引构建失败
+    pub fn index_project_two_pass(
+        &mut self,
+        project_path: &Path,
+        parsers: &[Box<dyn LanguageParser>],
+    ) -> Result<(), IndexError> {
+        log::info!("开始两遍索引项目: {}", project_path.display());
+        
+        // 收集项目中的源文件
+        let source_files = self.collect_source_files(project_path)?;
+        let total_files = source_files.len();
+        
+        if total_files == 0 {
+            log::warn!("项目中没有找到源文件: {}", project_path.display());
+            return Ok(());
+        }
+        
+        log::info!("找到 {} 个源文件", total_files);
+        
+        // ===== 第一遍：快速解析，提取方法签名和返回类型 =====
+        log::info!("第一遍：提取方法签名和返回类型...");
+        
+        let pb1 = ProgressBar::new(total_files as u64);
+        pb1.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
+                .unwrap()
+                .progress_chars("=>-")
+        );
+        pb1.set_message("第一遍解析");
+        
+        let parsed_files_pass1: Vec<ParsedFile> = source_files
+            .par_iter()
+            .progress_with(pb1.clone())
+            .filter_map(|file_path| {
+                match self.parse_file(file_path, parsers) {
+                    Ok(parsed) => Some(parsed),
+                    Err(e) => {
+                        log::warn!("解析失败 {}: {}", file_path.display(), e);
+                        None
+                    }
+                }
+            })
+            .collect();
+        
+        pb1.finish_with_message(format!("第一遍完成：{}/{} 个文件", parsed_files_pass1.len(), total_files));
+        
+        // 构建全局返回类型映射
+        log::info!("构建全局返回类型映射...");
+        let mut global_return_types = rustc_hash::FxHashMap::default();
+        
+        for parsed_file in &parsed_files_pass1 {
+            for class in &parsed_file.classes {
+                for method in &class.methods {
+                    if let Some(return_type) = &method.return_type {
+                        global_return_types.insert(method.full_qualified_name.clone(), return_type.clone());
+                    }
+                }
+            }
+        }
+        
+        log::info!("全局返回类型映射包含 {} 个方法", global_return_types.len());
+        
+        // ===== 第二遍：使用全局返回类型映射重新解析 =====
+        log::info!("第二遍：使用全局类型信息重新解析...");
+        
+        let pb2 = ProgressBar::new(total_files as u64);
+        pb2.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] {bar:40.magenta/blue} {pos}/{len} {msg}")
+                .unwrap()
+                .progress_chars("=>-")
+        );
+        pb2.set_message("第二遍解析");
+        
+        // 找到 Java 解析器
+        let java_parser = parsers.iter()
+            .find(|p| p.language_name() == "java")
+            .ok_or_else(|| IndexError::UnsupportedLanguage {
+                file: project_path.to_path_buf(),
+            })?;
+        
+        // 将 Box<dyn LanguageParser> 转换为 &JavaParser
+        let java_parser_ref = java_parser.as_ref() as *const dyn LanguageParser as *const crate::java_parser::JavaParser;
+        let java_parser_concrete = unsafe { &*java_parser_ref };
+        
+        let parsed_files_pass2: Vec<ParsedFile> = source_files
+            .par_iter()
+            .progress_with(pb2.clone())
+            .filter_map(|file_path| {
+                // 只对 Java 文件使用两遍解析
+                if file_path.extension().and_then(|e| e.to_str()) == Some("java") {
+                    // 读取文件内容
+                    let content = match std::fs::read_to_string(file_path) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            log::warn!("读取文件失败 {}: {}", file_path.display(), e);
+                            return None;
+                        }
+                    };
+                    
+                    // 使用全局返回类型映射解析
+                    match java_parser_concrete.parse_file_with_global_types(&content, file_path, &global_return_types) {
+                        Ok(parsed) => Some(parsed),
+                        Err(e) => {
+                            log::warn!("第二遍解析失败 {}: {:?}", file_path.display(), e);
+                            None
+                        }
+                    }
+                } else {
+                    // 非 Java 文件使用第一遍的结果
+                    parsed_files_pass1.iter()
+                        .find(|p| p.file_path == *file_path)
+                        .cloned()
+                }
+            })
+            .collect();
+        
+        pb2.finish_with_message(format!("第二遍完成：{}/{} 个文件", parsed_files_pass2.len(), total_files));
+        
+        // ===== 构建索引 =====
+        log::info!("构建最终索引...");
+        
+        let index_pb = ProgressBar::new(parsed_files_pass2.len() as u64);
+        index_pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] {bar:40.green/blue} {pos}/{len} {msg}")
+                .unwrap()
+                .progress_chars("=>-")
+        );
+        index_pb.set_message("构建索引");
+        
+        for parsed_file in parsed_files_pass2 {
+            if let Err(e) = self.index_parsed_file(parsed_file) {
+                log::warn!("索引文件失败: {}", e);
+            }
+            index_pb.inc(1);
+        }
+        
+        index_pb.finish_with_message("索引构建完成");
+        
+        log::info!("项目两遍索引完成: {}", project_path.display());
         log::info!("  - 方法总数: {}", self.methods.len());
         log::info!("  - 方法调用关系: {}", self.method_calls.len());
         log::info!("  - HTTP 提供者: {}", self.http_providers.len());

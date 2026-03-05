@@ -87,6 +87,61 @@ impl JavaParser {
         })
     }
     
+    /// 使用全局方法返回类型映射解析文件
+    /// 
+    /// 此方法用于两遍索引策略的第二遍，使用全局返回类型映射来推断跨文件的方法调用参数类型
+    /// 
+    /// # Arguments
+    /// * `content` - 文件内容
+    /// * `file_path` - 文件路径
+    /// * `global_return_types` - 全局方法返回类型映射（来自所有文件）
+    /// 
+    /// # Returns
+    /// * `Ok(ParsedFile)` - 解析成功
+    /// * `Err(ParseError)` - 解析失败
+    pub fn parse_file_with_global_types(
+        &self,
+        content: &str,
+        file_path: &Path,
+        global_return_types: &rustc_hash::FxHashMap<String, String>,
+    ) -> Result<ParsedFile, ParseError> {
+        let tree = self.parser.lock().unwrap().parse(content, None)
+            .ok_or_else(|| ParseError::InvalidFormat {
+                message: "Failed to parse Java file".to_string(),
+            })?;
+        
+        // 第一遍：提取类和方法，建立文件内方法返回类型映射
+        let (mut classes, file_return_types) = self.extract_classes_with_return_types(content, file_path, &tree);
+        
+        // 合并文件内和全局返回类型映射
+        let mut combined_return_types = MethodReturnTypeMap::default();
+        for (k, v) in global_return_types.iter() {
+            combined_return_types.insert(k.clone(), v.clone());
+        }
+        combined_return_types.extend(file_return_types);
+        
+        // 第二遍：使用合并后的返回类型映射重新提取方法调用
+        for class in &mut classes {
+            for method in &mut class.methods {
+                // 找到对应的方法节点并重新提取调用
+                let root_node = tree.root_node();
+                if let Some(method_node) = self.find_method_node(content, &root_node, &class.name, &method.name, &method.full_qualified_name) {
+                    method.calls = self.extract_method_calls_with_return_types(content, &method_node, &tree, &combined_return_types, &class.name);
+                }
+            }
+        }
+        
+        let imports = self.extract_imports(content, &tree);
+        
+        Ok(ParsedFile {
+            file_path: file_path.to_path_buf(),
+            language: "java".to_string(),
+            classes,
+            functions: vec![], // Java 使用类和方法，不使用顶层函数
+            imports,
+        })
+    }
+    
     /// 从项目根目录查找并解析 application.yml 配置文件
     /// 
     /// 查找路径：start/src/main/resources/application.yml

@@ -125,7 +125,7 @@ impl JavaParser {
             for method in &mut class.methods {
                 // 找到对应的方法节点并重新提取调用
                 let root_node = tree.root_node();
-                if let Some(method_node) = self.find_method_node(content, &root_node, &class.name, &method.name, &method.full_qualified_name) {
+                if let Some(method_node) = self.find_method_node(content, &root_node, &class.name, &method.name, &method.full_qualified_name, &tree) {
                     method.calls = self.extract_method_calls_with_return_types(content, &method_node, &tree, &combined_return_types, &class.name);
                 }
             }
@@ -375,6 +375,11 @@ impl JavaParser {
         import_map: &std::collections::HashMap<String, String>,
         package_name: &Option<String>,
     ) -> String {
+        // 如果已经包含点号，说明已经是完整类名
+        if simple_name.contains('.') {
+            return simple_name.to_string();
+        }
+        
         // 首先尝试从导入映射中查找
         if let Some(full_name) = import_map.get(simple_name) {
             return full_name.clone();
@@ -640,7 +645,7 @@ impl JavaParser {
         let line_end = method_node.end_position().row + 1;
         
         // 提取参数类型列表
-        let param_types = self.extract_parameter_types(source, &method_node);
+        let param_types = self.extract_parameter_types(source, &method_node, tree);
         
         // 构建完整的方法签名：ClassName::methodName(Type1,Type2,...)
         let full_qualified_name = if param_types.is_empty() {
@@ -717,7 +722,7 @@ impl JavaParser {
         let line_end = method_node.end_position().row + 1;
         
         // 提取参数类型列表
-        let param_types = self.extract_parameter_types(source, &method_node);
+        let param_types = self.extract_parameter_types(source, &method_node, tree);
         
         // 构建完整的方法签名：ClassName::methodName(Type1,Type2,...)
         let full_qualified_name = if param_types.is_empty() {
@@ -762,9 +767,14 @@ impl JavaParser {
         })
     }
     
-    /// 提取方法参数类型列表
-    fn extract_parameter_types(&self, source: &str, method_node: &tree_sitter::Node) -> Vec<String> {
+    /// 提取方法参数类型列表（包含完整包名）
+    fn extract_parameter_types(&self, source: &str, method_node: &tree_sitter::Node, tree: &tree_sitter::Tree) -> Vec<String> {
         let mut param_types = Vec::new();
+        
+        // 获取导入映射和包名
+        let import_map = self.build_import_map(source, tree);
+        let package_name = self.extract_package_name(source, tree);
+        
         let mut cursor = method_node.walk();
         
         // 查找 formal_parameters 节点
@@ -777,7 +787,13 @@ impl JavaParser {
                     if param_child.kind() == "formal_parameter" {
                         // 提取参数类型
                         if let Some(param_type) = self.extract_parameter_type(source, &param_child) {
-                            param_types.push(param_type);
+                            // 解析为完整类名
+                            let full_type = if is_primitive_or_common_type(&param_type) {
+                                param_type
+                            } else {
+                                self.resolve_full_class_name(&param_type, &import_map, &package_name)
+                            };
+                            param_types.push(full_type);
                         }
                     }
                 }
@@ -2031,7 +2047,7 @@ impl LanguageParser for JavaParser {
             for method in &mut class.methods {
                 // 找到对应的方法节点并重新提取调用
                 let root_node = tree.root_node();
-                if let Some(method_node) = self.find_method_node(content, &root_node, &class.name, &method.name, &method.full_qualified_name) {
+                if let Some(method_node) = self.find_method_node(content, &root_node, &class.name, &method.name, &method.full_qualified_name, &tree) {
                     method.calls = self.extract_method_calls_with_return_types(content, &method_node, &tree, &method_return_types, &class.name);
                 }
             }
@@ -2059,6 +2075,7 @@ impl JavaParser {
         class_name: &str,
         method_name: &str,
         full_qualified_name: &str,
+        tree: &tree_sitter::Tree,
     ) -> Option<tree_sitter::Node<'a>> {
         // 递归查找类节点
         if node.kind() == "class_declaration" || node.kind() == "interface_declaration" {
@@ -2083,7 +2100,7 @@ impl JavaParser {
                                     if let Some(found_method_name) = self.extract_method_name(source, &body_child) {
                                         if found_method_name == method_name {
                                             // 验证完整签名
-                                            let param_types = self.extract_parameter_types(source, &body_child);
+                                            let param_types = self.extract_parameter_types(source, &body_child, tree);
                                             let found_signature = if param_types.is_empty() {
                                                 format!("{}::{}()", class_name, found_method_name)
                                             } else {
@@ -2106,7 +2123,7 @@ impl JavaParser {
         // 递归查找子节点
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            if let Some(found) = self.find_method_node(source, &child, class_name, method_name, full_qualified_name) {
+            if let Some(found) = self.find_method_node(source, &child, class_name, method_name, full_qualified_name, tree) {
                 return Some(found);
             }
         }
@@ -2254,7 +2271,7 @@ impl JavaParser {
                             // 获取方法名
                             if let Some(method_name) = self.extract_method_name(source, &body_child) {
                                 // 获取参数类型
-                                let param_types = self.extract_parameter_types(source, &body_child);
+                                let param_types = self.extract_parameter_types(source, &body_child, tree);
                                 
                                 // 构建方法签名
                                 let method_signature = if param_types.is_empty() {

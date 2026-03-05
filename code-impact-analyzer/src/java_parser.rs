@@ -31,6 +31,16 @@ fn is_primitive_or_common_type(type_name: &str) -> bool {
     ) || type_name.contains("<") || type_name.contains("[")  // 泛型和数组保持原样
 }
 
+/// 移除类型中的泛型信息
+/// 例如：List<String> -> List, Map<K,V> -> Map
+fn remove_generics(type_name: &str) -> String {
+    if let Some(pos) = type_name.find('<') {
+        type_name[..pos].to_string()
+    } else {
+        type_name.to_string()
+    }
+}
+
 
 /// FeignClient 注解信息
 #[derive(Debug, Clone)]
@@ -656,21 +666,22 @@ impl JavaParser {
                     }
                 }
                 "generic_type" => {
-                    // 处理泛型类型，如 List<String>
+                    // 处理泛型类型，如 List<String> -> List
                     if let Some(text) = source.get(child.byte_range()) {
-                        return Some(text.to_string());
+                        return Some(remove_generics(text));
                     }
                 }
                 "array_type" => {
-                    // 处理数组类型，如 String[]
+                    // 处理数组类型，如 String[] -> String[]
+                    // 但如果是泛型数组，如 List<String>[] -> List[]
                     if let Some(text) = source.get(child.byte_range()) {
-                        return Some(text.to_string());
+                        return Some(remove_generics(text));
                     }
                 }
                 "scoped_type_identifier" => {
                     // 处理带包名的类型，如 java.util.List
                     if let Some(text) = source.get(child.byte_range()) {
-                        return Some(text.to_string());
+                        return Some(remove_generics(text));
                     }
                 }
                 _ => {}
@@ -1077,17 +1088,26 @@ impl JavaParser {
                 Some("Object".to_string())
             }
             
-            // 对象创建：new ClassName()
+            // 对象创建：new ClassName() 或 new ClassName<T>()
             "object_creation_expression" => {
                 let mut cursor = arg_node.walk();
                 for child in arg_node.children(&mut cursor) {
                     if child.kind() == "type_identifier" {
                         if let Some(type_name) = source.get(child.byte_range()) {
-                            // 尝试解析为完整类名
+                            // 尝试解析为完整类名，并移除泛型
+                            let full_type = import_map.get(type_name)
+                                .cloned()
+                                .unwrap_or_else(|| type_name.to_string());
+                            return Some(remove_generics(&full_type));
+                        }
+                    } else if child.kind() == "generic_type" {
+                        // 处理泛型类型，如 ArrayList<String> -> ArrayList
+                        if let Some(type_name) = source.get(child.byte_range()) {
+                            let full_type = remove_generics(type_name);
                             return Some(
-                                import_map.get(type_name)
+                                import_map.get(&full_type)
                                     .cloned()
-                                    .unwrap_or_else(|| type_name.to_string())
+                                    .unwrap_or(full_type)
                             );
                         }
                     }
@@ -1095,7 +1115,7 @@ impl JavaParser {
                 Some("Object".to_string())
             }
             
-            // 数组创建：new int[10]
+            // 数组创建：new int[10] 或 new List<String>[10]
             "array_creation_expression" => {
                 let mut cursor = arg_node.walk();
                 for child in arg_node.children(&mut cursor) {
@@ -1107,21 +1127,35 @@ impl JavaParser {
                         if let Some(type_name) = source.get(child.byte_range()) {
                             return Some(format!("{}[]", type_name));
                         }
+                    } else if child.kind() == "generic_type" {
+                        // 处理泛型数组，如 List<String>[] -> List[]
+                        if let Some(type_name) = source.get(child.byte_range()) {
+                            return Some(format!("{}[]", remove_generics(type_name)));
+                        }
                     }
                 }
                 Some("Object[]".to_string())
             }
             
-            // 类型转换：(Type) value
+            // 类型转换：(Type) value 或 (Type<T>) value
             "cast_expression" => {
                 let mut cursor = arg_node.walk();
                 for child in arg_node.children(&mut cursor) {
                     if child.kind() == "type_identifier" {
                         if let Some(type_name) = source.get(child.byte_range()) {
+                            let full_type = import_map.get(type_name)
+                                .cloned()
+                                .unwrap_or_else(|| type_name.to_string());
+                            return Some(remove_generics(&full_type));
+                        }
+                    } else if child.kind() == "generic_type" {
+                        // 处理泛型类型转换，如 (List<String>) -> List
+                        if let Some(type_name) = source.get(child.byte_range()) {
+                            let full_type = remove_generics(type_name);
                             return Some(
-                                import_map.get(type_name)
+                                import_map.get(&full_type)
                                     .cloned()
-                                    .unwrap_or_else(|| type_name.to_string())
+                                    .unwrap_or(full_type)
                             );
                         }
                     }
@@ -1686,10 +1720,10 @@ public class UserService {
         assert_eq!(method2.name, "updateUser");
         assert_eq!(method2.full_qualified_name, "com.example.UserService::updateUser(String,int,boolean)");
         
-        // 测试泛型参数方法
+        // 测试泛型参数方法（泛型被移除）
         let method3 = &class.methods[2];
         assert_eq!(method3.name, "findUsers");
-        assert_eq!(method3.full_qualified_name, "com.example.UserService::findUsers(List<String>,Map<String, Object>)");
+        assert_eq!(method3.full_qualified_name, "com.example.UserService::findUsers(List,Map)");
         
         // 测试数组参数方法
         let method4 = &class.methods[3];

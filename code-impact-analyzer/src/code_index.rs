@@ -206,7 +206,7 @@ impl CodeIndex {
             .filter_map(|file_path| {
                 match self.parse_file(file_path, parsers) {
                     Ok(parsed) => {
-                        println!("parsed: {:?}", file_path);
+                        // println!("parsed: {:?}", file_path);
                         Some(parsed)
                     },
                     Err(e) => {
@@ -262,7 +262,7 @@ impl CodeIndex {
         file_path: &Path,
         parsers: &[Box<dyn LanguageParser>],
     ) -> Result<ParsedFile, IndexError> {
-        println!("parsing: {:?}", file_path);
+        // println!("parsing: {:?}", file_path);
         // 读取文件内容
         let content = fs::read_to_string(file_path)
             .map_err(|e| IndexError::IoError {

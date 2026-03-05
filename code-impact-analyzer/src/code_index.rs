@@ -526,6 +526,20 @@ impl CodeIndex {
         self.methods.get(qualified_name)
     }
     
+    /// 查找方法的返回类型
+    /// 
+    /// # Arguments
+    /// * `method_signature` - 方法的完整签名（如 "com.example.UserService::getUser(String)"）
+    /// 
+    /// # Returns
+    /// * `Some(return_type)` - 如果找到方法且有返回类型
+    /// * `None` - 如果方法不存在或没有返回类型信息
+    pub fn find_method_return_type(&self, method_signature: &str) -> Option<&str> {
+        self.methods
+            .get(method_signature)
+            .and_then(|method| method.return_type.as_deref())
+    }
+    
     /// 查找调用指定方法的所有方法（上游）
     pub fn find_callers(&self, method: &str) -> Vec<&str> {
         self.reverse_calls

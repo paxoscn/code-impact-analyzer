@@ -1,13 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::fs;
-use std::sync::{Arc, Mutex};
 use rayon::prelude::*;
 use indicatif::{ProgressBar, ProgressStyle, ParallelProgressIterator};
 use rustc_hash::FxHashMap;
 use crate::errors::IndexError;
 use crate::language_parser::{LanguageParser, LanguageDetector, ParsedFile, MethodInfo, FunctionInfo};
 use crate::types::{HttpAnnotation, HttpEndpoint};
-use crate::parse_cache::ParseCache;
 
 /// 代码索引
 /// 
@@ -112,15 +110,12 @@ impl CodeIndex {
         );
         pb.set_message("解析源文件");
         
-        // 创建线程安全的解析缓存
-        let cache = Arc::new(Mutex::new(ParseCache::new()));
-        
         // 使用 rayon 并行解析所有源文件，并显示进度
         let parsed_files: Vec<ParsedFile> = source_files
             .par_iter()
             .progress_with(pb.clone())
             .filter_map(|file_path| {
-                match self.parse_file_with_cache(file_path, parsers, &cache) {
+                match self.parse_file(file_path, parsers) {
                     Ok(parsed) => Some(parsed),
                     Err(e) => {
                         // 记录错误但继续处理其他文件
@@ -204,16 +199,16 @@ impl CodeIndex {
         );
         pb.set_message(format!("解析 {}", project_path.file_name().unwrap_or_default().to_string_lossy()));
         
-        // 创建线程安全的解析缓存
-        let cache = Arc::new(Mutex::new(ParseCache::new()));
-        
         // 使用 rayon 并行解析所有源文件
         let parsed_files: Vec<ParsedFile> = source_files
             .par_iter()
             .progress_with(pb.clone())
             .filter_map(|file_path| {
-                match self.parse_file_with_cache(file_path, parsers, &cache) {
-                    Ok(parsed) => Some(parsed),
+                match self.parse_file(file_path, parsers) {
+                    Ok(parsed) => {
+                        println!("parsed: {:?}", file_path);
+                        Some(parsed)
+                    },
                     Err(e) => {
                         log::warn!("解析失败 {}: {}", file_path.display(), e);
                         None
@@ -222,6 +217,7 @@ impl CodeIndex {
             })
             .collect();
         
+        log::info!("111");
         pb.finish_with_message(format!("解析完成：{}/{} 个文件", parsed_files.len(), total_files));
         
         // 创建索引构建进度条
@@ -258,40 +254,34 @@ impl CodeIndex {
         Ok(())
     }
     
-    /// 使用缓存解析单个文件
+    /// 解析单个文件
     /// 
     /// 此方法设计为线程安全，可以在多个线程中并行调用
-    fn parse_file_with_cache(
+    fn parse_file(
         &self,
         file_path: &Path,
         parsers: &[Box<dyn LanguageParser>],
-        cache: &Arc<Mutex<ParseCache>>,
     ) -> Result<ParsedFile, IndexError> {
-        // 尝试从缓存获取或解析
-        let mut cache_guard = cache.lock().unwrap();
+        println!("parsing: {:?}", file_path);
+        // 读取文件内容
+        let content = fs::read_to_string(file_path)
+            .map_err(|e| IndexError::IoError {
+                path: file_path.to_path_buf(),
+                error: e.to_string(),
+            })?;
         
-        cache_guard.get_or_parse(file_path, |path| {
-            // 读取文件内容
-            let content = fs::read_to_string(path)
-                .map_err(|e| crate::errors::ParseError::IoError {
-                    path: path.to_path_buf(),
-                    error: e.to_string(),
-                })?;
-            
-            // 选择合适的解析器
-            let parser = self.select_parser(path, parsers)
-                .ok_or_else(|| crate::errors::ParseError::UnsupportedLanguage {
-                    language: format!("{:?}", path.extension()),
-                })?;
-            
-            // 解析文件
-            parser.parse_file(&content, path)
-        })
-        .map(|parsed| parsed.clone())
-        .map_err(|e| IndexError::ParseError {
-            file: file_path.to_path_buf(),
-            error: format!("{:?}", e),
-        })
+        // 选择合适的解析器
+        let parser = self.select_parser(file_path, parsers)
+            .ok_or_else(|| IndexError::UnsupportedLanguage {
+                file: file_path.to_path_buf(),
+            })?;
+        
+        // 解析文件
+        parser.parse_file(&content, file_path)
+            .map_err(|e| IndexError::ParseError {
+                file: file_path.to_path_buf(),
+                error: format!("{:?}", e),
+            })
     }
     
     /// 收集工作空间中的所有源文件

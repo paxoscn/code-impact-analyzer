@@ -75,6 +75,7 @@ cargo run -- --workspace /Users/lindagao/Workspace/ws-md-gm-horizontal-alliances
 cargo run -- --workspace /Users/lindagao/Workspace/syh --diff /Users/lindagao/Workspace/ws-md-gm-horizontal-alliances
 
 cargo run -- --workspace /Users/lindagao/Workspace/javadiff/examples/db-issue --diff /Users/lindagao/Workspace/javadiff/examples/db-issue
+cargo run -- --workspace /Users/lindagao/Workspace/javadiff/examples/gm-example-0305 --diff /Users/lindagao/Workspace/javadiff/examples/gm-example-0305 --hide-methods
 ```
 
 ### 命令行参数

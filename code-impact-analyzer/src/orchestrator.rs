@@ -657,8 +657,14 @@ impl AnalysisOrchestrator {
                 // 检查方法的行范围是否与变更范围重叠
                 let method_start = method_info.line_range.0;
                 let method_end = method_info.line_range.1;
+                if file_path.to_str().unwrap().contains("PromotionCoAssembler.java") {
+                    println!("method_start = {}, method_end = {}", method_start, method_end);
+                }
                 
                 for (change_start, change_end) in &modified_line_ranges {
+                    if file_path.to_str().unwrap().contains("PromotionCoAssembler.java") {
+                        println!("change_start = {}, change_end = {}", change_start, change_end);
+                    }
                     // 检查是否有重叠
                     if method_start <= *change_end && method_end >= *change_start {
                         changed_methods.push(method_name.clone());

@@ -51,6 +51,8 @@ pub struct MethodInfo {
     pub kafka_operations: Vec<KafkaOperation>,
     pub db_operations: Vec<DbOperation>,
     pub redis_operations: Vec<RedisOperation>,
+    /// 方法返回类型（用于类型推断）
+    pub return_type: Option<String>,
 }
 
 /// 函数信息（用于非面向对象语言如 Rust）
@@ -65,6 +67,8 @@ pub struct FunctionInfo {
     pub kafka_operations: Vec<KafkaOperation>,
     pub db_operations: Vec<DbOperation>,
     pub redis_operations: Vec<RedisOperation>,
+    /// 函数返回类型（用于类型推断）
+    pub return_type: Option<String>,
 }
 
 /// 方法调用信息

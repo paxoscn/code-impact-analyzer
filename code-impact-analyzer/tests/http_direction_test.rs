@@ -23,6 +23,7 @@ fn test_http_interface_provider_direction() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     index.index_method(&provider).unwrap();
@@ -62,6 +63,7 @@ fn test_feign_client_consumer_direction() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     index.index_method(&consumer).unwrap();
@@ -101,6 +103,7 @@ fn test_feign_client_with_base_path() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     index.index_method(&consumer).unwrap();
@@ -136,6 +139,7 @@ fn test_http_provider_and_consumer_different_endpoints() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // 创建一个 Feign 客户端调用
@@ -154,6 +158,7 @@ fn test_http_provider_and_consumer_different_endpoints() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     index.index_method(&provider).unwrap();

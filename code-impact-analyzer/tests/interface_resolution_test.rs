@@ -18,6 +18,8 @@ fn test_interface_with_single_implementation() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
+            return_type: None,
     };
     
     // 创建实现类方法
@@ -31,6 +33,8 @@ fn test_interface_with_single_implementation() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
+            return_type: None,
     };
     
     // 索引方法

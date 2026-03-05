@@ -435,6 +435,7 @@ impl CodeIndex {
             kafka_operations: function.kafka_operations.clone(),
             db_operations: function.db_operations.clone(),
             redis_operations: function.redis_operations.clone(),
+            return_type: function.return_type.clone(),
         };
         
         self.index_method(&method_info)
@@ -1090,6 +1091,7 @@ mod tests {
             kafka_operations: vec![],
             db_operations: vec![],
             redis_operations: vec![],
+            return_type: None,
         };
         
         index.index_method(&method).unwrap();
@@ -1126,6 +1128,7 @@ mod tests {
             ],
             db_operations: vec![],
             redis_operations: vec![],
+            return_type: None,
         };
         
         index.index_method(&producer_method).unwrap();
@@ -1154,6 +1157,7 @@ mod tests {
                 },
             ],
             redis_operations: vec![],
+            return_type: None,
         };
         
         index.index_method(&method).unwrap();
@@ -1182,6 +1186,7 @@ mod tests {
                     line: 15,
                 },
             ],
+            return_type: None,
         };
         
         index.index_method(&method).unwrap();
@@ -1204,6 +1209,7 @@ mod tests {
             kafka_operations: vec![],
             db_operations: vec![],
             redis_operations: vec![],
+            return_type: None,
         };
         
         index.index_method(&method).unwrap();
@@ -1238,6 +1244,7 @@ mod tests {
             kafka_operations: vec![],
             db_operations: vec![],
             redis_operations: vec![],
+            return_type: None,
         };
         
         let method_b = MethodInfo {
@@ -1255,6 +1262,7 @@ mod tests {
             kafka_operations: vec![],
             db_operations: vec![],
             redis_operations: vec![],
+            return_type: None,
         };
         
         let method_c = MethodInfo {
@@ -1267,6 +1275,7 @@ mod tests {
             kafka_operations: vec![],
             db_operations: vec![],
             redis_operations: vec![],
+            return_type: None,
         };
         
         index.index_method(&method_a).unwrap();
@@ -1315,6 +1324,7 @@ mod tests {
             kafka_operations: vec![],
             db_operations: vec![],
             redis_operations: vec![],
+            return_type: None,
         };
         
         index.index_method(&provider).unwrap();
@@ -1352,6 +1362,7 @@ mod tests {
             ],
             db_operations: vec![],
             redis_operations: vec![],
+            return_type: None,
         };
         
         let consumer = MethodInfo {
@@ -1370,6 +1381,7 @@ mod tests {
             ],
             db_operations: vec![],
             redis_operations: vec![],
+            return_type: None,
         };
         
         index.index_method(&producer).unwrap();
@@ -1408,6 +1420,7 @@ mod tests {
                 },
             ],
             redis_operations: vec![],
+            return_type: None,
         };
         
         let writer = MethodInfo {
@@ -1426,6 +1439,7 @@ mod tests {
                 },
             ],
             redis_operations: vec![],
+            return_type: None,
         };
         
         index.index_method(&reader).unwrap();
@@ -1464,6 +1478,7 @@ mod tests {
                     line: 15,
                 },
             ],
+            return_type: None,
         };
         
         let writer = MethodInfo {
@@ -1482,6 +1497,7 @@ mod tests {
                     line: 35,
                 },
             ],
+            return_type: None,
         };
         
         index.index_method(&reader).unwrap();
@@ -1520,6 +1536,7 @@ mod tests {
             kafka_operations: vec![],
             db_operations: vec![],
             redis_operations: vec![],
+            return_type: None,
         };
         
         let method_b = MethodInfo {
@@ -1537,6 +1554,7 @@ mod tests {
             kafka_operations: vec![],
             db_operations: vec![],
             redis_operations: vec![],
+            return_type: None,
         };
         
         index.index_method(&method_a).unwrap();
@@ -1570,6 +1588,7 @@ mod tests {
             ],
             db_operations: vec![],
             redis_operations: vec![],
+            return_type: None,
         };
         
         let consumer = MethodInfo {
@@ -1588,6 +1607,7 @@ mod tests {
             ],
             db_operations: vec![],
             redis_operations: vec![],
+            return_type: None,
         };
         
         index.index_method(&producer).unwrap();
@@ -1628,6 +1648,7 @@ mod tests {
                 },
             ],
             redis_operations: vec![],
+            return_type: None,
         };
         
         let writer = MethodInfo {
@@ -1646,6 +1667,7 @@ mod tests {
                 },
             ],
             redis_operations: vec![],
+            return_type: None,
         };
         
         index.index_method(&reader).unwrap();
@@ -1686,6 +1708,7 @@ mod tests {
                     line: 15,
                 },
             ],
+            return_type: None,
         };
         
         let writer = MethodInfo {
@@ -1704,6 +1727,7 @@ mod tests {
                     line: 35,
                 },
             ],
+            return_type: None,
         };
         
         index.index_method(&reader).unwrap();
@@ -1780,6 +1804,7 @@ mod tests {
             kafka_operations: vec![],
             db_operations: vec![],
             redis_operations: vec![],
+            return_type: None,
         };
         
         // 添加 HTTP 消费者（调用该接口的方法）
@@ -1798,6 +1823,7 @@ mod tests {
             kafka_operations: vec![],
             db_operations: vec![],
             redis_operations: vec![],
+            return_type: None,
         };
         
         index.index_method(&provider).unwrap();

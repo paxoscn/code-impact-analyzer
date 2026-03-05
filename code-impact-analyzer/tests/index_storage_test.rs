@@ -29,6 +29,7 @@ fn test_index_lifecycle() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     code_index.test_index_method(&method).unwrap();
@@ -105,6 +106,7 @@ fn test_index_reload_after_save() {
             kafka_operations: vec![],
             db_operations: vec![],
             redis_operations: vec![],
+            return_type: None,
         };
         
         code_index.test_index_method(&method).unwrap();
@@ -149,6 +151,7 @@ fn test_multiple_save_and_load_cycles() {
             kafka_operations: vec![],
             db_operations: vec![],
             redis_operations: vec![],
+            return_type: None,
         };
         
         code_index.test_index_method(&method).unwrap();
@@ -187,6 +190,7 @@ fn test_index_info_after_save() {
             kafka_operations: vec![],
             db_operations: vec![],
             redis_operations: vec![],
+            return_type: None,
         };
         
         code_index.test_index_method(&method).unwrap();

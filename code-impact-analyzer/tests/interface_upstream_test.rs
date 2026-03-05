@@ -24,6 +24,7 @@ fn test_interface_upstream_tracing() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // 定义实现类方法
@@ -37,6 +38,7 @@ fn test_interface_upstream_tracing() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // 定义 Controller 方法，调用接口方法
@@ -55,6 +57,7 @@ fn test_interface_upstream_tracing() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // 创建接口类
@@ -169,6 +172,7 @@ fn test_multiple_interfaces_upstream_tracing() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // 接口1方法
@@ -182,6 +186,7 @@ fn test_multiple_interfaces_upstream_tracing() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // 接口2方法
@@ -195,6 +200,7 @@ fn test_multiple_interfaces_upstream_tracing() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // Caller1 调用 Interface1::process
@@ -213,6 +219,7 @@ fn test_multiple_interfaces_upstream_tracing() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // Caller2 调用 Interface2::process
@@ -231,6 +238,7 @@ fn test_multiple_interfaces_upstream_tracing() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // 创建类

@@ -27,6 +27,7 @@ fn test_http_endpoint_config_association() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // 添加 HTTP 消费者（调用该接口的客户端代码）
@@ -44,6 +45,7 @@ fn test_http_endpoint_config_association() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     index.test_index_method(&provider).unwrap();
@@ -103,6 +105,7 @@ fn test_kafka_topic_config_association() {
         ],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // 添加 Kafka 消费者
@@ -121,6 +124,7 @@ fn test_kafka_topic_config_association() {
         ],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     index.test_index_method(&producer).unwrap();
@@ -169,6 +173,7 @@ fn test_database_table_config_association() {
             },
         ],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // 添加数据库写入者
@@ -187,6 +192,7 @@ fn test_database_table_config_association() {
             },
         ],
         redis_operations: vec![],
+            return_type: None,
     };
     
     let updater = MethodInfo {
@@ -204,6 +210,7 @@ fn test_database_table_config_association() {
             },
         ],
         redis_operations: vec![],
+            return_type: None,
     };
     
     index.test_index_method(&reader).unwrap();
@@ -395,6 +402,7 @@ fn test_config_association_deduplication() {
         ],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     let producer2 = MethodInfo {
@@ -412,6 +420,7 @@ fn test_config_association_deduplication() {
         ],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     index.test_index_method(&producer1).unwrap();

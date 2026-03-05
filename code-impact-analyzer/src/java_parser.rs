@@ -626,6 +626,7 @@ impl JavaParser {
             kafka_operations,
             db_operations,
             redis_operations,
+            return_type,
         })
     }
     
@@ -702,6 +703,7 @@ impl JavaParser {
             kafka_operations,
             db_operations,
             redis_operations,
+            return_type,
         })
     }
     
@@ -2284,6 +2286,7 @@ impl JavaParser {
                     kafka_operations: vec![],
                     db_operations: vec![],
                     redis_operations: vec![],
+                    return_type: Some(field_type.clone()),
                 });
                 
                 // 添加返回类型映射

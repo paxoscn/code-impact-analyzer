@@ -27,6 +27,7 @@ fn test_http_bidirectional_tracing() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // 索引提供者
@@ -81,6 +82,7 @@ fn test_kafka_producer_to_consumer_tracing() {
         }],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // 创建 Kafka 消费者方法
@@ -98,6 +100,7 @@ fn test_kafka_producer_to_consumer_tracing() {
         }],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // 索引生产者和消费者
@@ -164,6 +167,7 @@ fn test_kafka_consumer_to_producer_tracing() {
         }],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // 创建 Kafka 消费者方法
@@ -181,6 +185,7 @@ fn test_kafka_consumer_to_producer_tracing() {
         }],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // 索引生产者和消费者
@@ -227,6 +232,7 @@ fn test_database_writer_to_reader_tracing() {
             line: 15,
         }],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // 创建数据库读取者方法
@@ -244,6 +250,7 @@ fn test_database_writer_to_reader_tracing() {
             line: 35,
         }],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // 索引写入者和读取者
@@ -310,6 +317,7 @@ fn test_database_reader_to_writer_tracing() {
             line: 15,
         }],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // 创建数据库读取者方法
@@ -327,6 +335,7 @@ fn test_database_reader_to_writer_tracing() {
             line: 35,
         }],
         redis_operations: vec![],
+            return_type: None,
     };
     
     // 索引写入者和读取者
@@ -527,6 +536,7 @@ fn test_complex_cross_service_tracing() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     let service_method = MethodInfo {
@@ -543,6 +553,7 @@ fn test_complex_cross_service_tracing() {
         }],
         db_operations: vec![],
         redis_operations: vec![],
+            return_type: None,
     };
     
     let kafka_consumer = MethodInfo {
@@ -563,6 +574,7 @@ fn test_complex_cross_service_tracing() {
             line: 58,
         }],
         redis_operations: vec![],
+            return_type: None,
     };
     
     let db_reader = MethodInfo {

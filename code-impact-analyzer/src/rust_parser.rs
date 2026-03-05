@@ -151,6 +151,7 @@ impl RustParser {
             kafka_operations,
             db_operations,
             redis_operations,
+            return_type: None, // Rust 函数返回类型暂不提取
         })
     }
     

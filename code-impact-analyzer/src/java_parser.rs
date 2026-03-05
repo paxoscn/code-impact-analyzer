@@ -1106,6 +1106,7 @@ impl JavaParser {
             let mut identifiers = Vec::new();
             let mut scoped_identifiers = Vec::new();
             let mut argument_list_node = None;
+            let mut has_method_invocation_object = false;
             
             for child in node.children(&mut cursor) {
                 if child.kind() == "identifier" {
@@ -1117,6 +1118,9 @@ impl JavaParser {
                     if let Some(text) = source.get(child.byte_range()) {
                         scoped_identifiers.push(text.to_string());
                     }
+                } else if child.kind() == "method_invocation" {
+                    // 链式调用：obj.method1().method2()
+                    has_method_invocation_object = true;
                 } else if child.kind() == "argument_list" {
                     argument_list_node = Some(child);
                 }
@@ -1220,8 +1224,18 @@ impl JavaParser {
                     }
                 }
             } else {
-                // 无对象名的调用，如 method()，应该是调用当前类的方法
-                if !class_name.is_empty() {
+                // 无对象名的调用，如 method()
+                // 如果是链式调用（对象是另一个方法调用），不添加类名
+                // 否则，应该是调用当前类的方法
+                if has_method_invocation_object {
+                    // 链式调用，不添加类名前缀
+                    if arg_types.is_empty() {
+                        format!("{}()", method_name)
+                    } else {
+                        format!("{}({})", method_name, arg_types.join(","))
+                    }
+                } else if !class_name.is_empty() {
+                    // 当前类的方法调用
                     if arg_types.is_empty() {
                         format!("{}::{}()", class_name, method_name)
                     } else {
@@ -1476,12 +1490,16 @@ impl JavaParser {
         let mut cursor = method_invocation_node.walk();
         let mut identifiers = Vec::new();
         let mut argument_list_node = None;
+        let mut object_method_invocation = None;
         
         for child in method_invocation_node.children(&mut cursor) {
             if child.kind() == "identifier" {
                 if let Some(text) = source.get(child.byte_range()) {
                     identifiers.push(text.to_string());
                 }
+            } else if child.kind() == "method_invocation" {
+                // 链式调用：obj.method1().method2()
+                object_method_invocation = Some(child);
             } else if child.kind() == "argument_list" {
                 argument_list_node = Some(child);
             }
@@ -1497,6 +1515,51 @@ impl JavaParser {
         } else {
             Vec::new()
         };
+        
+        // 处理链式调用：obj.method1().method2()
+        if let Some(obj_method_node) = object_method_invocation {
+            // 先推断前一个方法调用的返回类型
+            if let Some(object_type) = self.infer_method_return_type_with_map(source, &obj_method_node, field_types, import_map, method_return_types) {
+                // 使用返回类型作为当前方法的对象类型
+                let method_name = identifiers.last()?;
+                
+                // 尝试将简单类名转换为完整类名
+                let full_class_name = import_map.get(&object_type)
+                    .unwrap_or(&object_type);
+                
+                // 构建方法签名
+                let method_signature = if arg_types.is_empty() {
+                    format!("{}::{}()", full_class_name, method_name)
+                } else {
+                    format!("{}::{}({})", full_class_name, method_name, arg_types.join(","))
+                };
+                
+                // 从映射中查找返回类型
+                if let Some(return_type) = method_return_types.get(&method_signature) {
+                    return Some(return_type.clone());
+                }
+                
+                // 如果没找到，尝试在所有方法签名中查找匹配的（可能是同一文件中的类）
+                // 查找所有以 ::methodName() 结尾的签名
+                let method_suffix = if arg_types.is_empty() {
+                    format!("::{}()", method_name)
+                } else {
+                    format!("::{}({})", method_name, arg_types.join(","))
+                };
+                
+                for (sig, ret_type) in method_return_types.iter() {
+                    if sig.ends_with(&method_suffix) {
+                        // 检查类名是否匹配（简单类名）
+                        if let Some(class_part) = sig.split("::").next() {
+                            if class_part.ends_with(&object_type) {
+                                return Some(ret_type.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            return None;
+        }
         
         // 对于 obj.method() 形式
         if identifiers.len() >= 2 {
@@ -2168,7 +2231,146 @@ impl JavaParser {
             }
         }
         
+        // 自动生成 getter 方法（如果字段存在但 getter 不存在）
+        self.generate_getters_for_fields(
+            source,
+            file_path,
+            class_node,
+            class_name,
+            &mut methods,
+            method_return_types,
+        );
+        
         methods
+    }
+    
+    /// 为类字段自动生成 getter 方法（如果不存在）
+    fn generate_getters_for_fields(
+        &self,
+        source: &str,
+        file_path: &Path,
+        class_node: &tree_sitter::Node,
+        class_name: &str,
+        methods: &mut Vec<MethodInfo>,
+        method_return_types: &mut MethodReturnTypeMap,
+    ) {
+        // 提取类的所有字段
+        let fields = self.extract_class_fields(source, class_node);
+        
+        // 为每个字段检查是否存在对应的 getter
+        for (field_name, field_type) in fields {
+            // 生成 getter 方法名：foo -> getFoo
+            let getter_name = format!("get{}{}", 
+                field_name.chars().next().unwrap().to_uppercase(),
+                &field_name[1..]
+            );
+            
+            // 检查是否已经存在这个 getter 方法
+            let getter_exists = methods.iter().any(|m| m.name == getter_name);
+            
+            if !getter_exists {
+                // 生成 getter 方法
+                let method_signature = format!("{}::{}()", class_name, getter_name);
+                let line = class_node.start_position().row + 1;
+                
+                // 添加到方法列表
+                methods.push(MethodInfo {
+                    name: getter_name.clone(),
+                    full_qualified_name: method_signature.clone(),
+                    file_path: file_path.to_path_buf(),
+                    line_range: (line, line),
+                    calls: vec![],
+                    http_annotations: None,
+                    kafka_operations: vec![],
+                    db_operations: vec![],
+                    redis_operations: vec![],
+                });
+                
+                // 添加返回类型映射
+                method_return_types.insert(method_signature, field_type);
+            }
+        }
+    }
+    
+    /// 提取类的所有字段（字段名 -> 字段类型）
+    fn extract_class_fields(
+        &self,
+        source: &str,
+        class_node: &tree_sitter::Node,
+    ) -> Vec<(String, String)> {
+        let mut fields = Vec::new();
+        
+        // 查找类体
+        let mut cursor = class_node.walk();
+        for child in class_node.children(&mut cursor) {
+            if child.kind() == "class_body" {
+                let mut body_cursor = child.walk();
+                for body_child in child.children(&mut body_cursor) {
+                    // 查找字段声明
+                    if body_child.kind() == "field_declaration" {
+                        // 提取字段类型和名称
+                        if let Some((field_type, field_names)) = self.extract_field_declaration(source, &body_child) {
+                            for field_name in field_names {
+                                fields.push((field_name, field_type.clone()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        fields
+    }
+    
+    /// 提取字段声明的类型和名称
+    fn extract_field_declaration(
+        &self,
+        source: &str,
+        field_node: &tree_sitter::Node,
+    ) -> Option<(String, Vec<String>)> {
+        let mut field_type = None;
+        let mut field_names = Vec::new();
+        
+        let mut cursor = field_node.walk();
+        for child in field_node.children(&mut cursor) {
+            match child.kind() {
+                "type_identifier" | "integral_type" | "floating_point_type" | "boolean_type" => {
+                    if let Some(text) = source.get(child.byte_range()) {
+                        field_type = Some(remove_generics(text));
+                    }
+                }
+                "generic_type" => {
+                    if let Some(text) = source.get(child.byte_range()) {
+                        field_type = Some(remove_generics(text));
+                    }
+                }
+                "array_type" => {
+                    if let Some(text) = source.get(child.byte_range()) {
+                        field_type = Some(remove_generics(text));
+                    }
+                }
+                "variable_declarator" => {
+                    // 提取变量名
+                    let mut var_cursor = child.walk();
+                    for var_child in child.children(&mut var_cursor) {
+                        if var_child.kind() == "identifier" {
+                            if let Some(text) = source.get(var_child.byte_range()) {
+                                field_names.push(text.to_string());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        if let Some(ftype) = field_type {
+            if !field_names.is_empty() {
+                return Some((ftype, field_names));
+            }
+        }
+        
+        None
     }
     
     /// 提取方法名
@@ -2377,9 +2579,11 @@ public class UserController {
         
         assert_eq!(result.classes.len(), 1);
         let class = &result.classes[0];
-        assert_eq!(class.methods.len(), 1);
+        // UserController 有 testMethod 和自动生成的 getUserService getter
+        let method = class.methods.iter()
+            .find(|m| m.name == "testMethod")
+            .expect("Should find testMethod");
         
-        let method = &class.methods[0];
         assert_eq!(method.calls.len(), 3);
         
         // 第一个调用：字面量参数
@@ -2415,9 +2619,11 @@ public class TestService {
         
         assert_eq!(result.classes.len(), 1);
         let class = &result.classes[0];
-        assert_eq!(class.methods.len(), 1);
+        // TestService 有 processUser 和自动生成的 getUserRepository getter
+        let method = class.methods.iter()
+            .find(|m| m.name == "processUser")
+            .expect("Should find processUser method");
         
-        let method = &class.methods[0];
         assert_eq!(method.calls.len(), 2);
         
         // 第一个调用：使用方法参数
@@ -2478,8 +2684,10 @@ public class TestService {
             .find(|c| c.name == "com.example.TestService")
             .expect("Should find TestService class");
         
-        assert_eq!(test_service.methods.len(), 1);
-        let method = &test_service.methods[0];
+        // TestService 有 processData 方法，还有自动生成的 getter
+        let method = test_service.methods.iter()
+            .find(|m| m.name == "processData")
+            .expect("Should find processData method");
         
         // 打印调用以便调试
         for (i, call) in method.calls.iter().enumerate() {
@@ -2499,6 +2707,154 @@ public class TestService {
             first_process_call.target,
             "com.example.DataProcessor::process(User)",
             "Should infer User type from findUser() return type"
+        );
+    }
+    
+    #[test]
+    fn test_extract_method_calls_with_nested_calls_with_getter() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+package com.example;
+
+public class UserRepository {
+    private User user;
+}
+
+public class User {
+    public String getName() {
+        return null;
+    }
+}
+
+public class DataProcessor {
+    public void process(User user) {
+        // process
+    }
+    
+    public void process(String name) {
+        // process
+    }
+}
+
+public class TestService {
+    private DataProcessor processor;
+    
+    public void processData(UserRepository userRepository) {
+        // 嵌套方法调用：userRepository.getUser() 返回 User，应该推断为 User 类型
+        processor.process(userRepository.getUser());
+        
+        // 链式调用：findUser() 返回 User，getName() 返回 String
+        processor.process(userRepository.getUser().getName());
+    }
+}
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("TestService.java")).unwrap();
+        
+        assert_eq!(result.classes.len(), 4);
+        
+        // 找到 TestService 类
+        let test_service = result.classes.iter()
+            .find(|c| c.name == "com.example.TestService")
+            .expect("Should find TestService class");
+        
+        // TestService 有 processData 方法，还有自动生成的 getProcessor getter
+        assert!(test_service.methods.len() >= 1, "Should have at least 1 method");
+        
+        let method = test_service.methods.iter()
+            .find(|m| m.name == "processData")
+            .expect("Should find processData method");
+        
+        // 打印调用以便调试
+        for (i, call) in method.calls.iter().enumerate() {
+            eprintln!("Call {}: {}", i, call.target);
+        }
+        
+        // 验证方法调用
+        assert!(method.calls.len() >= 2, "Should have at least 2 method calls");
+        
+        // 第一个调用应该推断出 User 类型（从 findUser 的返回类型）
+        let first_process_call = method.calls.iter()
+            .find(|c| c.target.starts_with("com.example.DataProcessor::process"))
+            .expect("Should find process call");
+        
+        // 验证：应该是 process(User) 而不是 process(Object)
+        assert_eq!(
+            first_process_call.target,
+            "com.example.DataProcessor::process(User)",
+            "Should infer User type from getUser() return type"
+        );
+    }
+    
+    #[test]
+    fn test_extract_method_calls_with_nested_calls_this_with_getter() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+package com.example;
+
+public class UserRepository {
+    private User user;
+}
+
+public class User {
+    public String getName() {
+        return null;
+    }
+}
+
+public class TestService {
+    public void process(User user, String name) {
+        // process
+    }
+    
+    public void process(String name) {
+        // process
+    }
+    
+    public void processData(UserRepository userRepository) {
+        // 嵌套方法调用：userRepository.getUser() 返回 User，应该推断为 User 类型
+        process(userRepository.getUser(), userRepository.getUser().getName());
+        
+        // 链式调用：findUser() 返回 User，getName() 返回 String
+        process(userRepository.getUser().getName());
+    }
+}
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("TestService.java")).unwrap();
+        
+        assert_eq!(result.classes.len(), 3);
+        
+        // 找到 TestService 类
+        let test_service = result.classes.iter()
+            .find(|c| c.name == "com.example.TestService")
+            .expect("Should find TestService class");
+        
+        // TestService 有 processData 方法，还有自动生成的 getProcessor getter
+        assert!(test_service.methods.len() >= 1, "Should have at least 1 method");
+        
+        let method = test_service.methods.iter()
+            .find(|m| m.name == "processData")
+            .expect("Should find processData method");
+        
+        // 打印调用以便调试
+        for (i, call) in method.calls.iter().enumerate() {
+            eprintln!("Call {}: {}", i, call.target);
+        }
+        
+        // 验证方法调用
+        assert!(method.calls.len() >= 2, "Should have at least 2 method calls");
+        
+        // 第一个调用应该推断出 User 类型（从 findUser 的返回类型）
+        let first_process_call = method.calls.iter()
+            .find(|c| c.target.starts_with("com.example.TestService::process"))
+            .expect("Should find process call");
+        
+        // 验证：应该是 process(User) 而不是 process(Object)
+        assert_eq!(
+            first_process_call.target,
+            "com.example.TestService::process(User,String)",
+            "Should infer User type from getUser() return type"
         );
     }
 
@@ -2719,9 +3075,11 @@ public class TestService {
         
         let result = parser.parse_file(source, Path::new("TestController.java")).unwrap();
         assert_eq!(result.classes.len(), 1);
-        assert_eq!(result.classes[0].methods.len(), 1);
+        // TestController 有 testMethod 和自动生成的 getEquipmentManageExe getter
+        let method = result.classes[0].methods.iter()
+            .find(|m| m.name == "testMethod")
+            .expect("Should find testMethod");
         
-        let method = &result.classes[0].methods[0];
         assert_eq!(method.calls.len(), 1);
         // 应该解析为完整的类名::方法名(参数类型)格式
         assert_eq!(method.calls[0].target, "com.hualala.shop.equipment.EquipmentManageExe::listExecuteSchedule(String)");
@@ -2790,6 +3148,7 @@ public class TestService {
         
         let result = parser.parse_file(source, Path::new("TestController.java")).unwrap();
         assert_eq!(result.classes.len(), 1);
+        // TestController 只有 testMethod，没有字段所以没有 getter
         assert_eq!(result.classes[0].methods.len(), 1);
         
         let method = &result.classes[0].methods[0];
@@ -2826,9 +3185,11 @@ public class TestService {
         
         let result = parser.parse_file(source, Path::new("TestController.java")).unwrap();
         assert_eq!(result.classes.len(), 1);
-        assert_eq!(result.classes[0].methods.len(), 1);
+        // TestController 有 testMethod 和自动生成的 getFieldExe getter
+        let method = result.classes[0].methods.iter()
+            .find(|m| m.name == "testMethod")
+            .expect("Should find testMethod");
         
-        let method = &result.classes[0].methods[0];
         assert_eq!(method.calls.len(), 2, "Should have 2 method calls");
         
         // 两个调用都应该解析为完整的类名::方法名格式
@@ -2932,9 +3293,13 @@ public class TestService {
         
         let result = parser.parse_file(source, Path::new("TestService.java")).unwrap();
         assert_eq!(result.classes.len(), 1);
-        assert_eq!(result.classes[0].methods.len(), 2);
+        // TestService 有 testMethod, localMethod 和自动生成的 getUserService getter
+        assert!(result.classes[0].methods.len() >= 2, "Should have at least 2 methods");
         
-        let test_method = &result.classes[0].methods[0];
+        let test_method = result.classes[0].methods.iter()
+            .find(|m| m.name == "testMethod")
+            .expect("Should find testMethod");
+        
         let call_names: Vec<&str> = test_method.calls.iter()
             .map(|c| c.target.as_str())
             .collect();
@@ -3039,9 +3404,11 @@ public class TestService {
         
         let result = parser.parse_file(source, Path::new("TestStaticMethod.java")).unwrap();
         assert_eq!(result.classes.len(), 1);
-        assert_eq!(result.classes[0].methods.len(), 1);
+        // TestStaticMethod 有 testMethod 和自动生成的 getUserService getter
+        let method = result.classes[0].methods.iter()
+            .find(|m| m.name == "testMethod")
+            .expect("Should find testMethod");
         
-        let method = &result.classes[0].methods[0];
         let call_targets: Vec<&str> = method.calls.iter()
             .map(|c| c.target.as_str())
             .collect();
@@ -3364,6 +3731,111 @@ public class UserService {
             process_method.calls[2].target,
             "com.example.UserService::notifyUser(String)",
             "Another direct call should include class name"
+        );
+    }
+
+    #[test]
+    fn test_extract_method_calls_with_nested_calls_with_getter() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+package com.example;
+
+public class User {
+    private String name;
+    private int age;
+    
+    // 注意：没有 getName() 和 getAge() 方法
+}
+
+public class UserRepository {
+    public User findUser(String id) {
+        return null;
+    }
+}
+
+public class DataProcessor {
+    public void process(String name) {
+        // process
+    }
+    
+    public void processAge(int age) {
+        // process
+    }
+}
+
+public class TestService {
+    private UserRepository userRepository;
+    private DataProcessor processor;
+    
+    public void processData() {
+        // 嵌套调用：findUser() 返回 User，然后调用 getName()
+        // 即使 User 类没有定义 getName()，也应该能推断出它存在
+        processor.process(userRepository.findUser("123").getName());
+        
+        // 同样，getAge() 也应该被推断出来
+        processor.processAge(userRepository.findUser("456").getAge());
+    }
+}
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("TestService.java")).unwrap();
+        
+        // 验证 User 类应该有自动生成的 getter 方法
+        let user_class = result.classes.iter()
+            .find(|c| c.name == "com.example.User")
+            .expect("Should find User class");
+        
+        // 打印方法以便调试
+        eprintln!("User class methods:");
+        for method in &user_class.methods {
+            eprintln!("  - {} -> {}", method.name, method.full_qualified_name);
+        }
+        
+        // 应该有 getName() 和 getAge() 方法（自动生成）
+        assert!(
+            user_class.methods.iter().any(|m| m.name == "getName"),
+            "Should have auto-generated getName() method"
+        );
+        
+        assert!(
+            user_class.methods.iter().any(|m| m.name == "getAge"),
+            "Should have auto-generated getAge() method"
+        );
+        
+        // 找到 TestService 类
+        let test_service = result.classes.iter()
+            .find(|c| c.name == "com.example.TestService")
+            .expect("Should find TestService class");
+        
+        let method = &test_service.methods[0];
+        
+        // 打印调用以便调试
+        eprintln!("TestService.processData() calls:");
+        for (i, call) in method.calls.iter().enumerate() {
+            eprintln!("  Call {}: {}", i, call.target);
+        }
+        
+        // 验证方法调用能够正确推断类型
+        // 第一个 process 调用应该推断出 String 类型（从 getName() 返回）
+        let first_process = method.calls.iter()
+            .find(|c| c.target.starts_with("com.example.DataProcessor::process("))
+            .expect("Should find process call");
+        
+        assert_eq!(
+            first_process.target,
+            "com.example.DataProcessor::process(String)",
+            "Should infer String type from getName() return type"
+        );
+        
+        // 第二个 processAge 调用应该推断出 int 类型（从 getAge() 返回）
+        let process_age = method.calls.iter()
+            .find(|c| c.target.starts_with("com.example.DataProcessor::processAge("))
+            .expect("Should find processAge call");
+        
+        assert_eq!(
+            process_age.target,
+            "com.example.DataProcessor::processAge(int)",
+            "Should infer int type from getAge() return type"
         );
     }
 

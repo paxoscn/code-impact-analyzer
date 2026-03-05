@@ -743,9 +743,13 @@ impl JavaParser {
         }
     }
     
-    /// 提取类中的字段类型映射（包括类字段和方法内的本地变量）
+    /// 提取类中的字段类型映射（包括类字段、方法参数和方法内的本地变量）
     fn extract_field_types(&self, source: &str, method_node: &tree_sitter::Node, tree: &tree_sitter::Tree) -> std::collections::HashMap<String, String> {
         let mut field_types = std::collections::HashMap::new();
+        
+        // 获取导入映射和包名，用于解析完整类名
+        let import_map = self.build_import_map(source, tree);
+        let package_name = self.extract_package_name(source, tree);
         
         // 1. 向上查找到类节点，提取类字段
         let mut current = method_node.parent();
@@ -768,10 +772,110 @@ impl JavaParser {
             current = node.parent();
         }
         
-        // 2. 提取方法内的本地变量
+        // 解析类字段的完整类名
+        let mut resolved_field_types = std::collections::HashMap::new();
+        for (var_name, simple_type) in field_types.iter() {
+            let full_type = if is_primitive_or_common_type(simple_type) {
+                simple_type.clone()
+            } else {
+                self.resolve_full_class_name(simple_type, &import_map, &package_name)
+            };
+            resolved_field_types.insert(var_name.clone(), full_type);
+        }
+        field_types = resolved_field_types;
+        
+        // 2. 提取方法参数
+        self.extract_method_parameter_types(source, method_node, &import_map, &package_name, &mut field_types);
+        
+        // 3. 提取方法内的本地变量
         self.extract_local_variable_types(source, method_node, tree, &mut field_types);
         
         field_types
+    }
+    
+    /// 提取方法参数类型
+    fn extract_method_parameter_types(
+        &self,
+        source: &str,
+        method_node: &tree_sitter::Node,
+        import_map: &std::collections::HashMap<String, String>,
+        package_name: &Option<String>,
+        field_types: &mut std::collections::HashMap<String, String>,
+    ) {
+        let mut param_types = std::collections::HashMap::new();
+        
+        // 查找 formal_parameters 节点
+        let mut cursor = method_node.walk();
+        for child in method_node.children(&mut cursor) {
+            if child.kind() == "formal_parameters" {
+                let mut param_cursor = child.walk();
+                
+                // 遍历每个 formal_parameter
+                for param_child in child.children(&mut param_cursor) {
+                    if param_child.kind() == "formal_parameter" {
+                        self.extract_parameter_name_and_type(source, &param_child, &mut param_types);
+                    }
+                }
+                break;
+            }
+        }
+        
+        // 将简单类名解析为完整类名
+        for (var_name, simple_type) in param_types.iter() {
+            // 对于基本类型和常用类型，保持原样
+            let full_type = if is_primitive_or_common_type(simple_type) {
+                simple_type.clone()
+            } else {
+                self.resolve_full_class_name(simple_type, import_map, package_name)
+            };
+            field_types.insert(var_name.clone(), full_type);
+        }
+    }    
+    /// 从参数声明中提取参数名和类型
+    fn extract_parameter_name_and_type(
+        &self,
+        source: &str,
+        param_node: &tree_sitter::Node,
+        field_types: &mut std::collections::HashMap<String, String>,
+    ) {
+        let mut param_type = None;
+        let mut param_name = None;
+        
+        let mut cursor = param_node.walk();
+        for child in param_node.children(&mut cursor) {
+            match child.kind() {
+                "type_identifier" => {
+                    if let Some(text) = source.get(child.byte_range()) {
+                        param_type = Some(remove_generics(text));
+                    }
+                }
+                "generic_type" => {
+                    if let Some(text) = source.get(child.byte_range()) {
+                        param_type = Some(remove_generics(text));
+                    }
+                }
+                "integral_type" | "floating_point_type" | "boolean_type" => {
+                    if let Some(text) = source.get(child.byte_range()) {
+                        param_type = Some(text.to_string());
+                    }
+                }
+                "array_type" => {
+                    if let Some(text) = source.get(child.byte_range()) {
+                        param_type = Some(remove_generics(text));
+                    }
+                }
+                "identifier" => {
+                    if let Some(text) = source.get(child.byte_range()) {
+                        param_name = Some(text.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        if let (Some(name), Some(type_name)) = (param_name, param_type) {
+            field_types.insert(name, type_name);
+        }
     }
     
     /// 提取方法内的本地变量类型，并解析为完整类名
@@ -782,21 +886,27 @@ impl JavaParser {
         tree: &tree_sitter::Tree,
         field_types: &mut std::collections::HashMap<String, String>,
     ) {
-        // 先提取本地变量的简单类型
+        // 先保存已有的变量（类字段和方法参数），它们已经被解析过了
+        let existing_vars: std::collections::HashSet<String> = field_types.keys().cloned().collect();
+        
+        // 提取本地变量的简单类型
         self.walk_node_for_local_vars(source, *method_node, field_types);
         
         // 获取导入映射和包名，用于解析完整类名
         let import_map = self.build_import_map(source, tree);
         let package_name = self.extract_package_name(source, tree);
         
-        // 将简单类名解析为完整类名
-        // 注意：对于 java.lang 包中的类（如 String），不需要解析
+        // 只解析新添加的本地变量
         let mut resolved_types = std::collections::HashMap::new();
         for (var_name, simple_type) in field_types.iter() {
-            // 对于基本类型和 java.lang 包中的常用类，保持原样
-            let full_type = if is_primitive_or_common_type(simple_type) {
+            let full_type = if existing_vars.contains(var_name) {
+                // 已经解析过的变量，保持原样
+                simple_type.clone()
+            } else if is_primitive_or_common_type(simple_type) {
+                // 基本类型和常用类型，保持原样
                 simple_type.clone()
             } else {
+                // 新的本地变量，解析为完整类名
                 self.resolve_full_class_name(simple_type, &import_map, &package_name)
             };
             resolved_types.insert(var_name.clone(), full_type);
@@ -1772,6 +1882,41 @@ public class UserController {
         
         // 第三个调用：混合参数
         assert_eq!(method.calls[2].target, "com.example.UserService::processData(String,int,String)");
+    }
+    
+    #[test]
+    fn test_extract_method_calls_with_method_parameters() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+package com.example;
+
+public class TestService {
+    private UserRepository userRepository;
+    
+    public void processUser(String userId, int age, boolean active) {
+        // userId, age, active 是方法参数
+        userRepository.updateUser(userId, age, active);
+        
+        // 使用字段
+        userRepository.findUser(userId);
+    }
+}
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("TestService.java")).unwrap();
+        
+        assert_eq!(result.classes.len(), 1);
+        let class = &result.classes[0];
+        assert_eq!(class.methods.len(), 1);
+        
+        let method = &class.methods[0];
+        assert_eq!(method.calls.len(), 2);
+        
+        // 第一个调用：使用方法参数
+        assert_eq!(method.calls[0].target, "com.example.UserRepository::updateUser(String,int,boolean)");
+        
+        // 第二个调用：使用方法参数
+        assert_eq!(method.calls[1].target, "com.example.UserRepository::findUser(String)");
     }
 
     

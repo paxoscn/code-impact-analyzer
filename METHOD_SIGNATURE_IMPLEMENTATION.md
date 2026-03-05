@@ -53,6 +53,30 @@ list.add(new ArrayList<String>())
 -> target: "List::add(ArrayList)"  // 泛型被移除
 ```
 
+### 3. 变量类型识别
+
+现在支持识别以下类型的变量：
+
+1. **类字段**：在类中声明的字段
+   ```java
+   private UserService userService;
+   ```
+
+2. **方法参数**：方法声明中的参数
+   ```java
+   public void processUser(String userId, int age) {
+       // userId 和 age 的类型会被识别
+   }
+   ```
+
+3. **本地变量**：方法内声明的变量
+   ```java
+   String name = "test";
+   int count = 10;
+   ```
+
+所有这些变量在方法调用时都能正确推断其类型。
+
 ### 3. 代码修改
 
 #### 3.1 新增辅助函数
@@ -118,7 +142,30 @@ list.add(new ArrayList<String>())
 }
 ```
 
-#### 3.4 其他修改
+#### 3.4 新增方法参数类型提取
+
+新增了 `extract_method_parameter_types` 和 `extract_parameter_name_and_type` 函数：
+
+1. **`extract_method_parameter_types`**: 提取方法参数的类型
+   - 遍历 `formal_parameters` 节点
+   - 提取每个参数的名称和类型
+   - 解析为完整类名
+
+2. **`extract_parameter_name_and_type`**: 提取单个参数的名称和类型
+   - 支持基本类型、引用类型、泛型类型（移除泛型）、数组类型
+
+#### 3.5 修改变量类型提取逻辑
+
+修改了 `extract_field_types` 函数，现在按顺序提取：
+1. 类字段（并解析为完整类名）
+2. 方法参数（并解析为完整类名）
+3. 本地变量（并解析为完整类名）
+
+修改了 `extract_local_variable_types` 函数：
+- 只解析新添加的本地变量
+- 避免重复解析已经处理过的类字段和方法参数
+
+#### 3.6 其他修改
 
 1. **`extract_local_variable_types`**: 
    - 对于基本类型和常用类型，不进行完整类名解析
@@ -129,7 +176,13 @@ list.add(new ArrayList<String>())
 
 ### 4. 测试更新
 
-#### 4.1 更新测试期望值
+#### 4.1 新增测试
+
+1. **`test_extract_method_with_parameters`**: 测试方法声明的参数类型提取
+2. **`test_extract_method_calls_with_arguments`**: 测试方法调用的参数类型推断（字面量和本地变量）
+3. **`test_extract_method_calls_with_method_parameters`**: 测试方法调用的参数类型推断（方法参数）
+
+#### 4.2 更新测试期望值
 
 将泛型参数的测试期望值从：
 ```rust
@@ -210,8 +263,8 @@ Map::put(String,HashMap)      // put("key", new HashMap<String, Integer>())
 ## 测试结果
 
 所有测试通过：
-- 123个单元测试全部通过
-- 包括新增的参数类型提取和推断测试
+- 124个单元测试全部通过
+- 包括新增的方法参数类型识别测试
 - 包括更新后的所有现有测试
 
 ## 后续工作

@@ -130,7 +130,51 @@ public class TestService {
 - 跨文件的返回类型推断需要全局索引（未实现）
 - 链式调用（如 `foo.bar().baz()`）的中间返回类型推断有限
 
-### 5. 代码修改
+### 5. 自身方法调用识别（新功能）
+
+对于 `go()` 或 `this.go()` 这样的调用，现在会自动识别为当前类的方法调用。
+
+**工作原理：**
+
+在提取方法调用时，会传入当前类名。当遇到以下情况时，会自动添加类名前缀：
+
+1. **无对象名的调用**：`method()`
+2. **使用 this 的调用**：`this.method()`
+
+**示例：**
+
+```java
+package com.example;
+
+public class UserService {
+    public void processUser(String userId) {
+        // 直接调用自身方法（无对象名）
+        validateUser(userId);
+        
+        // 使用 this 调用自身方法
+        this.saveUser(userId);
+    }
+    
+    private void validateUser(String userId) {
+        // validate
+    }
+    
+    private void saveUser(String userId) {
+        // save
+    }
+}
+```
+
+**识别结果：**
+- `validateUser(userId)` → `com.example.UserService::validateUser(String)`
+- `this.saveUser(userId)` → `com.example.UserService::saveUser(String)`
+
+**好处：**
+- 能够准确追踪类内部的方法调用关系
+- 支持影响分析时识别同一类中的方法依赖
+- 与外部方法调用保持一致的格式
+
+### 6. 代码修改
 
 #### 5.1 新增辅助函数
 

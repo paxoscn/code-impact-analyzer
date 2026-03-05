@@ -670,8 +670,8 @@ impl JavaParser {
             format!("{}::{}({})", class_name, name, param_types.join(","))
         };
         
-        // 提取方法调用（传入返回类型映射）
-        let calls = self.extract_method_calls_with_return_types(source, &method_node, tree, method_return_types);
+        // 提取方法调用（传入返回类型映射和类名）
+        let calls = self.extract_method_calls_with_return_types(source, &method_node, tree, method_return_types, class_name);
         
         // 提取 HTTP 注解（如果是 FeignClient，需要组合类级别和方法级别的注解）
         let http_annotations = if let Some(feign_info) = feign_client_info {
@@ -776,11 +776,19 @@ impl JavaParser {
     fn extract_method_calls(&self, source: &str, method_node: &tree_sitter::Node, tree: &tree_sitter::Tree) -> Vec<MethodCall> {
         // 使用空的返回类型映射（向后兼容）
         let empty_map = MethodReturnTypeMap::new();
-        self.extract_method_calls_with_return_types(source, method_node, tree, &empty_map)
+        // 使用空字符串作为类名（向后兼容，不会添加类名前缀）
+        self.extract_method_calls_with_return_types(source, method_node, tree, &empty_map, "")
     }
     
     /// 提取方法调用（带返回类型映射）
-    fn extract_method_calls_with_return_types(&self, source: &str, method_node: &tree_sitter::Node, tree: &tree_sitter::Tree, method_return_types: &MethodReturnTypeMap) -> Vec<MethodCall> {
+    fn extract_method_calls_with_return_types(
+        &self,
+        source: &str,
+        method_node: &tree_sitter::Node,
+        tree: &tree_sitter::Tree,
+        method_return_types: &MethodReturnTypeMap,
+        class_name: &str,
+    ) -> Vec<MethodCall> {
         let mut calls = Vec::new();
         
         // 提取导入语句，建立简单类名到完整类名的映射
@@ -789,7 +797,7 @@ impl JavaParser {
         // 提取类中的字段声明和方法内的本地变量，建立变量名到类型的映射
         let field_types = self.extract_field_types(source, method_node, tree);
         
-        self.walk_node_for_calls_with_return_types(source, *method_node, &mut calls, &field_types, &import_map, method_return_types);
+        self.walk_node_for_calls_with_return_types(source, *method_node, &mut calls, &field_types, &import_map, method_return_types, class_name);
         calls
     }
     
@@ -1077,7 +1085,8 @@ impl JavaParser {
     ) {
         // 使用空的返回类型映射（向后兼容）
         let empty_map = MethodReturnTypeMap::new();
-        self.walk_node_for_calls_with_return_types(source, node, calls, field_types, import_map, &empty_map);
+        // 使用空字符串作为类名（向后兼容，不会添加类名前缀）
+        self.walk_node_for_calls_with_return_types(source, node, calls, field_types, import_map, &empty_map, "");
     }
     
     /// 递归遍历节点查找方法调用（带返回类型映射）
@@ -1089,6 +1098,7 @@ impl JavaParser {
         field_types: &std::collections::HashMap<String, String>,
         import_map: &std::collections::HashMap<String, String>,
         method_return_types: &MethodReturnTypeMap,
+        class_name: &str,
     ) {
         if node.kind() == "method_invocation" {
             // 查找方法调用的对象和方法名
@@ -1146,6 +1156,7 @@ impl JavaParser {
             
             // 对于 obj.method() 形式，有两个 identifier：对象名和方法名
             // 对于 method() 形式，只有一个 identifier：方法名
+            // 对于 this.method() 形式，会有 "this" 关键字
             let (object_name, method_name) = if identifiers.len() >= 2 {
                 (Some(identifiers[0].clone()), identifiers[identifiers.len() - 1].clone())
             } else if identifiers.len() == 1 {
@@ -1154,9 +1165,35 @@ impl JavaParser {
                 return;
             };
             
+            // 检查是否有 "this" 关键字
+            let mut has_this = false;
+            let mut cursor_check = node.walk();
+            for child in node.children(&mut cursor_check) {
+                if child.kind() == "this" {
+                    has_this = true;
+                    break;
+                }
+            }
+            
             // 如果有对象名，尝试解析为完整的类名::方法名
             let target = if let Some(obj) = object_name {
-                if let Some(class_type) = field_types.get(&obj) {
+                // 检查是否是 "this"
+                if obj == "this" || has_this {
+                    // this.method() 调用，使用当前类名
+                    if !class_name.is_empty() {
+                        if arg_types.is_empty() {
+                            format!("{}::{}()", class_name, method_name)
+                        } else {
+                            format!("{}::{}({})", class_name, method_name, arg_types.join(","))
+                        }
+                    } else {
+                        if arg_types.is_empty() {
+                            format!("{}()", method_name)
+                        } else {
+                            format!("{}({})", method_name, arg_types.join(","))
+                        }
+                    }
+                } else if let Some(class_type) = field_types.get(&obj) {
                     // 尝试将简单类名转换为完整类名
                     let full_class_name = import_map.get(class_type)
                         .unwrap_or(class_type);
@@ -1183,10 +1220,19 @@ impl JavaParser {
                     }
                 }
             } else {
-                if arg_types.is_empty() {
-                    format!("{}()", method_name)
+                // 无对象名的调用，如 method()，应该是调用当前类的方法
+                if !class_name.is_empty() {
+                    if arg_types.is_empty() {
+                        format!("{}::{}()", class_name, method_name)
+                    } else {
+                        format!("{}::{}({})", class_name, method_name, arg_types.join(","))
+                    }
                 } else {
-                    format!("{}({})", method_name, arg_types.join(","))
+                    if arg_types.is_empty() {
+                        format!("{}()", method_name)
+                    } else {
+                        format!("{}({})", method_name, arg_types.join(","))
+                    }
                 }
             };
             
@@ -1198,7 +1244,7 @@ impl JavaParser {
         
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            self.walk_node_for_calls_with_return_types(source, child, calls, field_types, import_map, method_return_types);
+            self.walk_node_for_calls_with_return_types(source, child, calls, field_types, import_map, method_return_types, class_name);
         }
     }
     
@@ -1866,7 +1912,7 @@ impl LanguageParser for JavaParser {
                 // 找到对应的方法节点并重新提取调用
                 let root_node = tree.root_node();
                 if let Some(method_node) = self.find_method_node(content, &root_node, &class.name, &method.name, &method.full_qualified_name) {
-                    method.calls = self.extract_method_calls_with_return_types(content, &method_node, &tree, &method_return_types);
+                    method.calls = self.extract_method_calls_with_return_types(content, &method_node, &tree, &method_return_types, &class.name);
                 }
             }
         }
@@ -3247,3 +3293,77 @@ public class TestService {
         assert_eq!(result.classes[0].methods[2].db_operations[0].operation_type, DbOpType::Update);
         assert_eq!(result.classes[0].methods[3].db_operations[0].operation_type, DbOpType::Update);
     }
+
+    #[test]
+    fn test_extract_self_method_calls() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+package com.example;
+
+public class UserService {
+    private String name;
+    
+    public void processUser(String userId) {
+        // 直接调用自身方法（无对象名）
+        validateUser(userId);
+        
+        // 使用 this 调用自身方法
+        this.saveUser(userId);
+        
+        // 调用另一个自身方法
+        notifyUser(userId);
+    }
+    
+    private void validateUser(String userId) {
+        // validate
+    }
+    
+    private void saveUser(String userId) {
+        // save
+    }
+    
+    private void notifyUser(String userId) {
+        // notify
+    }
+}
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("UserService.java")).unwrap();
+        assert_eq!(result.classes.len(), 1);
+        
+        let class = &result.classes[0];
+        assert_eq!(class.name, "com.example.UserService");
+        
+        // 找到 processUser 方法
+        let process_method = class.methods.iter()
+            .find(|m| m.name == "processUser")
+            .expect("Should find processUser method");
+        
+        // 打印调用以便调试
+        for (i, call) in process_method.calls.iter().enumerate() {
+            eprintln!("Call {}: {}", i, call.target);
+        }
+        
+        // 应该有3个方法调用
+        assert_eq!(process_method.calls.len(), 3, "Should have 3 method calls");
+        
+        // 验证所有调用都包含完整的类名
+        assert_eq!(
+            process_method.calls[0].target,
+            "com.example.UserService::validateUser(String)",
+            "Direct call should include class name"
+        );
+        
+        assert_eq!(
+            process_method.calls[1].target,
+            "com.example.UserService::saveUser(String)",
+            "this.method() call should include class name"
+        );
+        
+        assert_eq!(
+            process_method.calls[2].target,
+            "com.example.UserService::notifyUser(String)",
+            "Another direct call should include class name"
+        );
+    }
+

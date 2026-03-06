@@ -129,6 +129,20 @@ impl JavaParser {
         global_return_types: &rustc_hash::FxHashMap<String, String>,
         global_class_index: &rustc_hash::FxHashMap<String, String>,
     ) -> Result<ParsedFile, ParseError> {
+        // 检查第一行是否包含 "Generated" 字样，如果是则跳过解析
+        if let Some(first_line) = content.lines().next() {
+            if first_line.contains("Generated") {
+                // 返回空的解析结果
+                return Ok(ParsedFile {
+                    file_path: file_path.to_path_buf(),
+                    language: "java".to_string(),
+                    classes: vec![],
+                    functions: vec![],
+                    imports: vec![],
+                });
+            }
+        }
+        
         let tree = self.parser.lock().unwrap().parse(content, None)
             .ok_or_else(|| ParseError::InvalidFormat {
                 message: "Failed to parse Java file".to_string(),
@@ -2431,6 +2445,20 @@ impl LanguageParser for JavaParser {
     }
     
     fn parse_file(&self, content: &str, file_path: &Path) -> Result<ParsedFile, ParseError> {
+        // 检查第一行是否包含 "Generated" 字样，如果是则跳过解析
+        if let Some(first_line) = content.lines().next() {
+            if first_line.contains("Generated") {
+                // 返回空的解析结果
+                return Ok(ParsedFile {
+                    file_path: file_path.to_path_buf(),
+                    language: "java".to_string(),
+                    classes: vec![],
+                    functions: vec![],
+                    imports: vec![],
+                });
+            }
+        }
+        
         let tree = self.parser.lock().unwrap().parse(content, None)
             .ok_or_else(|| ParseError::InvalidFormat {
                 message: "Failed to parse Java file".to_string(),

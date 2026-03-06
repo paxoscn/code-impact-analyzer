@@ -95,6 +95,7 @@ impl JavaParser {
     /// * `content` - 文件内容
     /// * `file_path` - 文件路径
     /// * `global_return_types` - 全局方法返回类型映射（来自所有文件）
+    /// * `global_class_index` - 全局类索引（用于解析通配符导入）
     /// 
     /// # Returns
     /// * `Ok(ParsedFile)` - 解析成功
@@ -104,6 +105,29 @@ impl JavaParser {
         content: &str,
         file_path: &Path,
         global_return_types: &rustc_hash::FxHashMap<String, String>,
+    ) -> Result<ParsedFile, ParseError> {
+        // 创建空的全局类索引（向后兼容）
+        let empty_class_index = rustc_hash::FxHashMap::default();
+        self.parse_file_with_global_types_and_classes(content, file_path, global_return_types, &empty_class_index)
+    }
+    
+    /// 使用全局方法返回类型映射和类索引解析文件
+    /// 
+    /// # Arguments
+    /// * `content` - 文件内容
+    /// * `file_path` - 文件路径
+    /// * `global_return_types` - 全局方法返回类型映射（来自所有文件）
+    /// * `global_class_index` - 全局类索引（用于解析通配符导入）
+    /// 
+    /// # Returns
+    /// * `Ok(ParsedFile)` - 解析成功
+    /// * `Err(ParseError)` - 解析失败
+    pub fn parse_file_with_global_types_and_classes(
+        &self,
+        content: &str,
+        file_path: &Path,
+        global_return_types: &rustc_hash::FxHashMap<String, String>,
+        global_class_index: &rustc_hash::FxHashMap<String, String>,
     ) -> Result<ParsedFile, ParseError> {
         let tree = self.parser.lock().unwrap().parse(content, None)
             .ok_or_else(|| ParseError::InvalidFormat {
@@ -126,7 +150,7 @@ impl JavaParser {
                 // 找到对应的方法节点并重新提取调用
                 let root_node = tree.root_node();
                 if let Some(method_node) = self.find_method_node(content, &root_node, &class.name, &method.name, &method.full_qualified_name, &tree) {
-                    method.calls = self.extract_method_calls_with_return_types(content, &method_node, &tree, &combined_return_types, &class.name);
+                    method.calls = self.extract_method_calls_with_return_types_and_index(content, &method_node, &tree, &combined_return_types, &class.name, global_class_index);
                 }
             }
         }
@@ -386,6 +410,92 @@ impl JavaParser {
         }
         
         // 如果没有找到，假设在同一个包中
+        if let Some(pkg) = package_name {
+            return format!("{}.{}", pkg, simple_name);
+        }
+        
+        // 否则返回简单类名
+        simple_name.to_string()
+    }
+    
+    /// 将简单类名解析为完整类名（支持通配符导入和全局索引查找）
+    fn resolve_full_class_name_with_wildcards(
+        &self,
+        simple_name: &str,
+        import_map: &std::collections::HashMap<String, String>,
+        wildcard_imports: &[String],
+        package_name: &Option<String>,
+        global_types: &rustc_hash::FxHashMap<String, String>,
+    ) -> String {
+        // 如果已经包含点号，说明已经是完整类名
+        if simple_name.contains('.') {
+            return simple_name.to_string();
+        }
+        
+        // 如果是基础类型或常用类型，直接返回
+        if is_primitive_or_common_type(simple_name) {
+            return simple_name.to_string();
+        }
+        
+        // 首先尝试从导入映射中查找（明确的import语句）
+        if let Some(full_name) = import_map.get(simple_name) {
+            return full_name.clone();
+        }
+        
+        // 尝试在通配符导入的包中查找
+        for wildcard_package in wildcard_imports {
+            let candidate = format!("{}.{}", wildcard_package, simple_name);
+            // 在全局索引中查找这个候选类名
+            if global_types.contains_key(&candidate) {
+                return candidate;
+            }
+        }
+        
+        // 如果在通配符导入中没找到，假设在同一个包中
+        if let Some(pkg) = package_name {
+            return format!("{}.{}", pkg, simple_name);
+        }
+        
+        // 否则返回简单类名
+        simple_name.to_string()
+    }
+    
+    /// 将简单类名解析为完整类名（支持通配符导入，使用启发式回退）
+    /// 
+    /// 这个方法不需要全局索引，而是使用启发式方法：
+    /// 1. 首先尝试明确的import语句
+    /// 2. 如果有通配符导入，优先使用第一个通配符导入的包
+    /// 3. 最后回退到当前包
+    fn resolve_full_class_name_with_wildcard_fallback(
+        &self,
+        simple_name: &str,
+        import_map: &std::collections::HashMap<String, String>,
+        wildcard_imports: &[String],
+        package_name: &Option<String>,
+    ) -> String {
+        // 如果已经包含点号，说明已经是完整类名
+        if simple_name.contains('.') {
+            return simple_name.to_string();
+        }
+        
+        // 如果是基础类型或常用类型，直接返回
+        if is_primitive_or_common_type(simple_name) {
+            return simple_name.to_string();
+        }
+        
+        // 首先尝试从导入映射中查找（明确的import语句）
+        if let Some(full_name) = import_map.get(simple_name) {
+            return full_name.clone();
+        }
+        
+        // 如果有通配符导入，优先使用第一个通配符导入的包
+        // 注意：这是一个启发式方法，可能不总是正确的
+        // 但在没有全局索引的情况下，这是一个合理的假设
+        if let Some(wildcard_package) = wildcard_imports.first() {
+            return format!("{}.{}", wildcard_package, simple_name);
+        }
+        
+        // 如果没有通配符导入，假设在同一个包中
         if let Some(pkg) = package_name {
             return format!("{}.{}", pkg, simple_name);
         }
@@ -862,6 +972,21 @@ impl JavaParser {
         method_return_types: &MethodReturnTypeMap,
         class_name: &str,
     ) -> Vec<MethodCall> {
+        // 使用空的全局类索引（向后兼容）
+        let empty_index = rustc_hash::FxHashMap::default();
+        self.extract_method_calls_with_return_types_and_index(source, method_node, tree, method_return_types, class_name, &empty_index)
+    }
+    
+    /// 提取方法调用（带返回类型映射和全局类索引）
+    fn extract_method_calls_with_return_types_and_index(
+        &self,
+        source: &str,
+        method_node: &tree_sitter::Node,
+        tree: &tree_sitter::Tree,
+        method_return_types: &MethodReturnTypeMap,
+        class_name: &str,
+        global_class_index: &rustc_hash::FxHashMap<String, String>,
+    ) -> Vec<MethodCall> {
         let mut calls = Vec::new();
         
         // 提取导入语句，建立简单类名到完整类名的映射
@@ -870,8 +995,8 @@ impl JavaParser {
         // 提取包名
         let package_name = self.extract_package_name(source, tree);
         
-        // 提取类中的字段声明和方法内的本地变量，建立变量名到类型的映射
-        let field_types = self.extract_field_types(source, method_node, tree);
+        // 提取类中的字段声明和方法内的本地变量，建立变量名到类型的映射（使用全局类索引）
+        let field_types = self.extract_field_types_with_global_index(source, method_node, tree, global_class_index);
         
         self.walk_node_for_calls_with_return_types(source, *method_node, &mut calls, &field_types, &import_map, method_return_types, class_name, &package_name);
         calls
@@ -885,6 +1010,17 @@ impl JavaParser {
         self.walk_node_for_import_map(source, root_node, &mut import_map);
         
         import_map
+    }
+    
+    /// 构建导入映射，同时返回通配符导入的包列表
+    fn build_import_map_with_wildcards(&self, source: &str, tree: &tree_sitter::Tree) -> (std::collections::HashMap<String, String>, Vec<String>) {
+        let mut import_map = std::collections::HashMap::new();
+        let mut wildcard_imports = Vec::new();
+        let root_node = tree.root_node();
+        
+        self.walk_node_for_import_map_with_wildcards(source, root_node, &mut import_map, &mut wildcard_imports);
+        
+        (import_map, wildcard_imports)
     }
     
     /// 递归遍历节点构建导入映射
@@ -914,12 +1050,68 @@ impl JavaParser {
         }
     }
     
+    /// 递归遍历节点构建导入映射，同时收集通配符导入
+    fn walk_node_for_import_map_with_wildcards(
+        &self,
+        source: &str,
+        node: tree_sitter::Node,
+        import_map: &mut std::collections::HashMap<String, String>,
+        wildcard_imports: &mut Vec<String>,
+    ) {
+        if node.kind() == "import_declaration" {
+            let import_text = source.get(node.byte_range()).unwrap_or("");
+            
+            // 检查是否是通配符导入 (import bar.*;)
+            if import_text.contains("*") {
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    if child.kind() == "scoped_identifier" {
+                        if let Some(package_path) = source.get(child.byte_range()) {
+                            wildcard_imports.push(package_path.to_string());
+                        }
+                    }
+                }
+            } else {
+                // 普通导入
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    if child.kind() == "scoped_identifier" {
+                        if let Some(full_name) = source.get(child.byte_range()) {
+                            // 从完整类名中提取简单类名
+                            if let Some(simple_name) = full_name.split('.').last() {
+                                import_map.insert(simple_name.to_string(), full_name.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            self.walk_node_for_import_map_with_wildcards(source, child, import_map, wildcard_imports);
+        }
+    }
+    
     /// 提取类中的字段类型映射（包括类字段、方法参数和方法内的本地变量）
     fn extract_field_types(&self, source: &str, method_node: &tree_sitter::Node, tree: &tree_sitter::Tree) -> std::collections::HashMap<String, String> {
+        // 使用空的全局类索引（向后兼容）
+        let empty_index = rustc_hash::FxHashMap::default();
+        self.extract_field_types_with_global_index(source, method_node, tree, &empty_index)
+    }
+    
+    /// 提取类中的字段类型映射（使用全局类索引）
+    fn extract_field_types_with_global_index(
+        &self,
+        source: &str,
+        method_node: &tree_sitter::Node,
+        tree: &tree_sitter::Tree,
+        global_class_index: &rustc_hash::FxHashMap<String, String>,
+    ) -> std::collections::HashMap<String, String> {
         let mut field_types = std::collections::HashMap::new();
         
-        // 获取导入映射和包名，用于解析完整类名
-        let import_map = self.build_import_map(source, tree);
+        // 获取导入映射（包括通配符导入）和包名，用于解析完整类名
+        let (import_map, wildcard_imports) = self.build_import_map_with_wildcards(source, tree);
         let package_name = self.extract_package_name(source, tree);
         
         // 1. 向上查找到类节点，提取类字段
@@ -943,23 +1135,23 @@ impl JavaParser {
             current = node.parent();
         }
         
-        // 解析类字段的完整类名
+        // 解析类字段的完整类名（使用全局类索引）
         let mut resolved_field_types = std::collections::HashMap::new();
         for (var_name, simple_type) in field_types.iter() {
             let full_type = if is_primitive_or_common_type(simple_type) {
                 simple_type.clone()
             } else {
-                self.resolve_full_class_name(simple_type, &import_map, &package_name)
+                self.resolve_full_class_name_with_wildcards(simple_type, &import_map, &wildcard_imports, &package_name, global_class_index)
             };
             resolved_field_types.insert(var_name.clone(), full_type);
         }
         field_types = resolved_field_types;
         
         // 2. 提取方法参数
-        self.extract_method_parameter_types(source, method_node, &import_map, &package_name, &mut field_types);
+        self.extract_method_parameter_types_with_wildcards_and_index(source, method_node, &import_map, &wildcard_imports, &package_name, &mut field_types, global_class_index);
         
         // 3. 提取方法内的本地变量
-        self.extract_local_variable_types(source, method_node, tree, &mut field_types);
+        self.extract_local_variable_types_with_wildcards_and_index(source, method_node, tree, &mut field_types, global_class_index);
         
         field_types
     }
@@ -998,6 +1190,87 @@ impl JavaParser {
                 simple_type.clone()
             } else {
                 self.resolve_full_class_name(simple_type, import_map, package_name)
+            };
+            field_types.insert(var_name.clone(), full_type);
+        }
+    }
+    
+    /// 提取方法参数类型（支持通配符导入）
+    fn extract_method_parameter_types_with_wildcards(
+        &self,
+        source: &str,
+        method_node: &tree_sitter::Node,
+        import_map: &std::collections::HashMap<String, String>,
+        wildcard_imports: &[String],
+        package_name: &Option<String>,
+        field_types: &mut std::collections::HashMap<String, String>,
+    ) {
+        let mut param_types = std::collections::HashMap::new();
+        
+        // 查找 formal_parameters 节点
+        let mut cursor = method_node.walk();
+        for child in method_node.children(&mut cursor) {
+            if child.kind() == "formal_parameters" {
+                let mut param_cursor = child.walk();
+                
+                // 遍历每个 formal_parameter
+                for param_child in child.children(&mut param_cursor) {
+                    if param_child.kind() == "formal_parameter" {
+                        self.extract_parameter_name_and_type(source, &param_child, &mut param_types);
+                    }
+                }
+                break;
+            }
+        }
+        
+        // 将简单类名解析为完整类名（支持通配符导入）
+        for (var_name, simple_type) in param_types.iter() {
+            // 对于基本类型和常用类型，保持原样
+            let full_type = if is_primitive_or_common_type(simple_type) {
+                simple_type.clone()
+            } else {
+                self.resolve_full_class_name_with_wildcard_fallback(simple_type, import_map, wildcard_imports, package_name)
+            };
+            field_types.insert(var_name.clone(), full_type);
+        }
+    }
+    
+    /// 提取方法参数类型（使用全局类索引）
+    fn extract_method_parameter_types_with_wildcards_and_index(
+        &self,
+        source: &str,
+        method_node: &tree_sitter::Node,
+        import_map: &std::collections::HashMap<String, String>,
+        wildcard_imports: &[String],
+        package_name: &Option<String>,
+        field_types: &mut std::collections::HashMap<String, String>,
+        global_class_index: &rustc_hash::FxHashMap<String, String>,
+    ) {
+        let mut param_types = std::collections::HashMap::new();
+        
+        // 查找 formal_parameters 节点
+        let mut cursor = method_node.walk();
+        for child in method_node.children(&mut cursor) {
+            if child.kind() == "formal_parameters" {
+                let mut param_cursor = child.walk();
+                
+                // 遍历每个 formal_parameter
+                for param_child in child.children(&mut param_cursor) {
+                    if param_child.kind() == "formal_parameter" {
+                        self.extract_parameter_name_and_type(source, &param_child, &mut param_types);
+                    }
+                }
+                break;
+            }
+        }
+        
+        // 将简单类名解析为完整类名（使用全局类索引）
+        for (var_name, simple_type) in param_types.iter() {
+            // 对于基本类型和常用类型，保持原样
+            let full_type = if is_primitive_or_common_type(simple_type) {
+                simple_type.clone()
+            } else {
+                self.resolve_full_class_name_with_wildcards(simple_type, import_map, wildcard_imports, package_name, global_class_index)
             };
             field_types.insert(var_name.clone(), full_type);
         }
@@ -1079,6 +1352,83 @@ impl JavaParser {
             } else {
                 // 新的本地变量，解析为完整类名
                 self.resolve_full_class_name(simple_type, &import_map, &package_name)
+            };
+            resolved_types.insert(var_name.clone(), full_type);
+        }
+        
+        // 更新 field_types
+        *field_types = resolved_types;
+    }
+    
+    /// 提取方法内的本地变量类型，并解析为完整类名（支持通配符导入）
+    fn extract_local_variable_types_with_wildcards(
+        &self,
+        source: &str,
+        method_node: &tree_sitter::Node,
+        tree: &tree_sitter::Tree,
+        field_types: &mut std::collections::HashMap<String, String>,
+    ) {
+        // 先保存已有的变量（类字段和方法参数），它们已经被解析过了
+        let existing_vars: std::collections::HashSet<String> = field_types.keys().cloned().collect();
+        
+        // 提取本地变量的简单类型
+        self.walk_node_for_local_vars(source, *method_node, field_types);
+        
+        // 获取导入映射（包括通配符导入）和包名，用于解析完整类名
+        let (import_map, wildcard_imports) = self.build_import_map_with_wildcards(source, tree);
+        let package_name = self.extract_package_name(source, tree);
+        
+        // 只解析新添加的本地变量
+        let mut resolved_types = std::collections::HashMap::new();
+        for (var_name, simple_type) in field_types.iter() {
+            let full_type = if existing_vars.contains(var_name) {
+                // 已经解析过的变量，保持原样
+                simple_type.clone()
+            } else if is_primitive_or_common_type(simple_type) {
+                // 基本类型和常用类型，保持原样
+                simple_type.clone()
+            } else {
+                // 新的本地变量，解析为完整类名（支持通配符导入）
+                self.resolve_full_class_name_with_wildcard_fallback(simple_type, &import_map, &wildcard_imports, &package_name)
+            };
+            resolved_types.insert(var_name.clone(), full_type);
+        }
+        
+        // 更新 field_types
+        *field_types = resolved_types;
+    }
+    
+    /// 提取方法内的本地变量类型，并解析为完整类名（使用全局类索引）
+    fn extract_local_variable_types_with_wildcards_and_index(
+        &self,
+        source: &str,
+        method_node: &tree_sitter::Node,
+        tree: &tree_sitter::Tree,
+        field_types: &mut std::collections::HashMap<String, String>,
+        global_class_index: &rustc_hash::FxHashMap<String, String>,
+    ) {
+        // 先保存已有的变量（类字段和方法参数），它们已经被解析过了
+        let existing_vars: std::collections::HashSet<String> = field_types.keys().cloned().collect();
+        
+        // 提取本地变量的简单类型
+        self.walk_node_for_local_vars(source, *method_node, field_types);
+        
+        // 获取导入映射（包括通配符导入）和包名，用于解析完整类名
+        let (import_map, wildcard_imports) = self.build_import_map_with_wildcards(source, tree);
+        let package_name = self.extract_package_name(source, tree);
+        
+        // 只解析新添加的本地变量
+        let mut resolved_types = std::collections::HashMap::new();
+        for (var_name, simple_type) in field_types.iter() {
+            let full_type = if existing_vars.contains(var_name) {
+                // 已经解析过的变量，保持原样
+                simple_type.clone()
+            } else if is_primitive_or_common_type(simple_type) {
+                // 基本类型和常用类型，保持原样
+                simple_type.clone()
+            } else {
+                // 新的本地变量，解析为完整类名（使用全局类索引）
+                self.resolve_full_class_name_with_wildcards(simple_type, &import_map, &wildcard_imports, &package_name, global_class_index)
             };
             resolved_types.insert(var_name.clone(), full_type);
         }

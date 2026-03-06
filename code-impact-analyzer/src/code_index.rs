@@ -131,12 +131,16 @@ impl CodeIndex {
         
         pb1.finish_with_message(format!("第一遍完成：{}/{} 个文件", parsed_files_pass1.len(), total_files));
         
-        // 构建全局返回类型映射
-        log::info!("构建全局返回类型映射...");
+        // 构建全局返回类型映射和全局类索引
+        log::info!("构建全局返回类型映射和类索引...");
         let mut global_return_types = rustc_hash::FxHashMap::default();
+        let mut global_class_index = rustc_hash::FxHashMap::default();
         
         for parsed_file in &parsed_files_pass1 {
             for class in &parsed_file.classes {
+                // 添加类到全局索引
+                global_class_index.insert(class.name.clone(), class.name.clone());
+                
                 for method in &class.methods {
                     if let Some(return_type) = &method.return_type {
                         global_return_types.insert(method.full_qualified_name.clone(), return_type.clone());
@@ -146,6 +150,7 @@ impl CodeIndex {
         }
         
         log::info!("全局返回类型映射包含 {} 个方法", global_return_types.len());
+        log::info!("全局类索引包含 {} 个类", global_class_index.len());
         
         // ===== 第二遍：使用全局返回类型映射重新解析 =====
         log::info!("第二遍：使用全局类型信息重新解析...");
@@ -185,8 +190,8 @@ impl CodeIndex {
                         }
                     };
                     
-                    // 使用全局返回类型映射解析
-                    match java_parser_concrete.parse_file_with_global_types(&content, file_path, &global_return_types) {
+                    // 使用全局返回类型映射和类索引解析
+                    match java_parser_concrete.parse_file_with_global_types_and_classes(&content, file_path, &global_return_types, &global_class_index) {
                         Ok(parsed) => Some(parsed),
                         Err(e) => {
                             log::warn!("第二遍解析失败 {}: {:?}", file_path.display(), e);
@@ -376,12 +381,16 @@ impl CodeIndex {
         
         pb1.finish_with_message(format!("第一遍完成：{}/{} 个文件", parsed_files_pass1.len(), total_files));
         
-        // 构建全局返回类型映射
-        log::info!("构建全局返回类型映射...");
+        // 构建全局返回类型映射和全局类索引
+        log::info!("构建全局返回类型映射和类索引...");
         let mut global_return_types = rustc_hash::FxHashMap::default();
+        let mut global_class_index = rustc_hash::FxHashMap::default();
         
         for parsed_file in &parsed_files_pass1 {
             for class in &parsed_file.classes {
+                // 添加类到全局索引
+                global_class_index.insert(class.name.clone(), class.name.clone());
+                
                 for method in &class.methods {
                     if let Some(return_type) = &method.return_type {
                         global_return_types.insert(method.full_qualified_name.clone(), return_type.clone());
@@ -391,6 +400,7 @@ impl CodeIndex {
         }
         
         log::info!("全局返回类型映射包含 {} 个方法", global_return_types.len());
+        log::info!("全局类索引包含 {} 个类", global_class_index.len());
         
         // ===== 第二遍：使用全局返回类型映射重新解析 =====
         log::info!("第二遍：使用全局类型信息重新解析...");
@@ -430,8 +440,8 @@ impl CodeIndex {
                         }
                     };
                     
-                    // 使用全局返回类型映射解析
-                    match java_parser_concrete.parse_file_with_global_types(&content, file_path, &global_return_types) {
+                    // 使用全局返回类型映射和类索引解析
+                    match java_parser_concrete.parse_file_with_global_types_and_classes(&content, file_path, &global_return_types, &global_class_index) {
                         Ok(parsed) => Some(parsed),
                         Err(e) => {
                             log::warn!("第二遍解析失败 {}: {:?}", file_path.display(), e);

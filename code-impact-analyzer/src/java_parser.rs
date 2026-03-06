@@ -668,7 +668,7 @@ impl JavaParser {
         let kafka_operations = self.extract_kafka_operations(source, &method_node);
         
         // 提取返回类型（用于Mapper类的数据库操作判断）
-        let return_type = self.extract_return_type(source, &method_node);
+        let return_type = self.extract_return_type(source, &method_node, tree);
         
         // 提取数据库操作
         let db_operations = self.extract_db_operations(source, &method_node, simple_class_name, &return_type);
@@ -745,7 +745,7 @@ impl JavaParser {
         let kafka_operations = self.extract_kafka_operations(source, &method_node);
         
         // 提取返回类型（用于Mapper类的数据库操作判断）
-        let return_type = self.extract_return_type(source, &method_node);
+        let return_type = self.extract_return_type(source, &method_node, tree);
         
         // 提取数据库操作
         let db_operations = self.extract_db_operations(source, &method_node, simple_class_name, &return_type);
@@ -867,10 +867,13 @@ impl JavaParser {
         // 提取导入语句，建立简单类名到完整类名的映射
         let import_map = self.build_import_map(source, tree);
         
+        // 提取包名
+        let package_name = self.extract_package_name(source, tree);
+        
         // 提取类中的字段声明和方法内的本地变量，建立变量名到类型的映射
         let field_types = self.extract_field_types(source, method_node, tree);
         
-        self.walk_node_for_calls_with_return_types(source, *method_node, &mut calls, &field_types, &import_map, method_return_types, class_name);
+        self.walk_node_for_calls_with_return_types(source, *method_node, &mut calls, &field_types, &import_map, method_return_types, class_name, &package_name);
         calls
     }
     
@@ -1158,8 +1161,9 @@ impl JavaParser {
     ) {
         // 使用空的返回类型映射（向后兼容）
         let empty_map = MethodReturnTypeMap::new();
+        let empty_package = None;
         // 使用空字符串作为类名（向后兼容，不会添加类名前缀）
-        self.walk_node_for_calls_with_return_types(source, node, calls, field_types, import_map, &empty_map, "");
+        self.walk_node_for_calls_with_return_types(source, node, calls, field_types, import_map, &empty_map, "", &empty_package);
     }
     
     /// 递归遍历节点查找方法调用（带返回类型映射）
@@ -1172,6 +1176,7 @@ impl JavaParser {
         import_map: &std::collections::HashMap<String, String>,
         method_return_types: &MethodReturnTypeMap,
         class_name: &str,
+        package_name: &Option<String>,
     ) {
         if node.kind() == "method_invocation" {
             // 查找方法调用的对象和方法名
@@ -1201,9 +1206,9 @@ impl JavaParser {
             
             let line = node.start_position().row + 1;
             
-            // 提取参数类型（传入返回类型映射）
+            // 提取参数类型（传入返回类型映射和包名）
             let arg_types = if let Some(arg_node) = argument_list_node {
-                self.extract_argument_types_with_return_types(source, &arg_node, field_types, import_map, method_return_types)
+                self.extract_argument_types_with_return_types(source, &arg_node, field_types, import_map, method_return_types, package_name)
             } else {
                 Vec::new()
             };
@@ -1331,7 +1336,7 @@ impl JavaParser {
         
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            self.walk_node_for_calls_with_return_types(source, child, calls, field_types, import_map, method_return_types, class_name);
+            self.walk_node_for_calls_with_return_types(source, child, calls, field_types, import_map, method_return_types, class_name, package_name);
         }
     }
     
@@ -1343,9 +1348,10 @@ impl JavaParser {
         field_types: &std::collections::HashMap<String, String>,
         import_map: &std::collections::HashMap<String, String>,
     ) -> Vec<String> {
-        // 使用空的返回类型映射（向后兼容）
+        // 使用空的返回类型映射和空的包名（向后兼容）
         let empty_map = MethodReturnTypeMap::new();
-        self.extract_argument_types_with_return_types(source, argument_list_node, field_types, import_map, &empty_map)
+        let empty_package = None;
+        self.extract_argument_types_with_return_types(source, argument_list_node, field_types, import_map, &empty_map, &empty_package)
     }
     
     /// 提取方法调用的参数类型（带返回类型映射）
@@ -1356,6 +1362,7 @@ impl JavaParser {
         field_types: &std::collections::HashMap<String, String>,
         import_map: &std::collections::HashMap<String, String>,
         method_return_types: &MethodReturnTypeMap,
+        package_name: &Option<String>,
     ) -> Vec<String> {
         let mut arg_types = Vec::new();
         let mut cursor = argument_list_node.walk();
@@ -1366,8 +1373,8 @@ impl JavaParser {
                 continue;
             }
             
-            // 推断参数类型（传入返回类型映射）
-            if let Some(arg_type) = self.infer_argument_type_with_return_types(source, &child, field_types, import_map, method_return_types) {
+            // 推断参数类型（传入返回类型映射和包名）
+            if let Some(arg_type) = self.infer_argument_type_with_return_types(source, &child, field_types, import_map, method_return_types, package_name) {
                 arg_types.push(arg_type);
             }
         }
@@ -1383,9 +1390,10 @@ impl JavaParser {
         field_types: &std::collections::HashMap<String, String>,
         import_map: &std::collections::HashMap<String, String>,
     ) -> Option<String> {
-        // 使用空的返回类型映射（向后兼容）
+        // 使用空的返回类型映射和空的包名（向后兼容）
         let empty_map = MethodReturnTypeMap::new();
-        self.infer_argument_type_with_return_types(source, arg_node, field_types, import_map, &empty_map)
+        let empty_package = None;
+        self.infer_argument_type_with_return_types(source, arg_node, field_types, import_map, &empty_map, &empty_package)
     }
     
     /// 推断参数的类型（带返回类型映射）
@@ -1396,6 +1404,7 @@ impl JavaParser {
         field_types: &std::collections::HashMap<String, String>,
         import_map: &std::collections::HashMap<String, String>,
         method_return_types: &MethodReturnTypeMap,
+        package_name: &Option<String>,
     ) -> Option<String> {
         match arg_node.kind() {
             // 字符串字面量
@@ -1457,7 +1466,7 @@ impl JavaParser {
             // 方法调用：obj.method() 或 method()
             "method_invocation" => {
                 // 尝试推断方法返回类型（使用返回类型映射）
-                self.infer_method_return_type_with_map(source, arg_node, field_types, import_map, method_return_types)
+                self.infer_method_return_type_with_map(source, arg_node, field_types, import_map, method_return_types, package_name)
                     .or(Some("Object".to_string()))
             }
             
@@ -1467,21 +1476,31 @@ impl JavaParser {
                 for child in arg_node.children(&mut cursor) {
                     if child.kind() == "type_identifier" {
                         if let Some(type_name) = source.get(child.byte_range()) {
-                            // 尝试解析为完整类名，并移除泛型
-                            let full_type = import_map.get(type_name)
-                                .cloned()
-                                .unwrap_or_else(|| type_name.to_string());
-                            return Some(remove_generics(&full_type));
+                            // 使用 resolve_full_class_name 解析完整类名
+                            let simple_type = remove_generics(type_name);
+                            let full_type = if is_primitive_or_common_type(&simple_type) {
+                                simple_type
+                            } else {
+                                self.resolve_full_class_name(&simple_type, import_map, package_name)
+                            };
+                            return Some(full_type);
+                        }
+                    } else if child.kind() == "scoped_type_identifier" {
+                        // 处理完整包名类型，如 com.example.model.User
+                        if let Some(type_name) = source.get(child.byte_range()) {
+                            let simple_type = remove_generics(type_name);
+                            return Some(simple_type);
                         }
                     } else if child.kind() == "generic_type" {
                         // 处理泛型类型，如 ArrayList<String> -> ArrayList
                         if let Some(type_name) = source.get(child.byte_range()) {
-                            let full_type = remove_generics(type_name);
-                            return Some(
-                                import_map.get(&full_type)
-                                    .cloned()
-                                    .unwrap_or(full_type)
-                            );
+                            let simple_type = remove_generics(type_name);
+                            let full_type = if is_primitive_or_common_type(&simple_type) {
+                                simple_type
+                            } else {
+                                self.resolve_full_class_name(&simple_type, import_map, package_name)
+                            };
+                            return Some(full_type);
                         }
                     }
                 }
@@ -1516,20 +1535,25 @@ impl JavaParser {
                 for child in arg_node.children(&mut cursor) {
                     if child.kind() == "type_identifier" {
                         if let Some(type_name) = source.get(child.byte_range()) {
-                            let full_type = import_map.get(type_name)
-                                .cloned()
-                                .unwrap_or_else(|| type_name.to_string());
-                            return Some(remove_generics(&full_type));
+                            // 使用 resolve_full_class_name 解析完整类名
+                            let simple_type = remove_generics(type_name);
+                            let full_type = if is_primitive_or_common_type(&simple_type) {
+                                simple_type
+                            } else {
+                                self.resolve_full_class_name(&simple_type, import_map, package_name)
+                            };
+                            return Some(full_type);
                         }
                     } else if child.kind() == "generic_type" {
                         // 处理泛型类型转换，如 (List<String>) -> List
                         if let Some(type_name) = source.get(child.byte_range()) {
-                            let full_type = remove_generics(type_name);
-                            return Some(
-                                import_map.get(&full_type)
-                                    .cloned()
-                                    .unwrap_or(full_type)
-                            );
+                            let simple_type = remove_generics(type_name);
+                            let full_type = if is_primitive_or_common_type(&simple_type) {
+                                simple_type
+                            } else {
+                                self.resolve_full_class_name(&simple_type, import_map, package_name)
+                            };
+                            return Some(full_type);
                         }
                     }
                 }
@@ -1558,6 +1582,7 @@ impl JavaParser {
         field_types: &std::collections::HashMap<String, String>,
         import_map: &std::collections::HashMap<String, String>,
         method_return_types: &MethodReturnTypeMap,
+        package_name: &Option<String>,
     ) -> Option<String> {
         // 提取方法名和对象类型
         let mut cursor = method_invocation_node.walk();
@@ -1584,7 +1609,7 @@ impl JavaParser {
         
         // 提取参数类型
         let arg_types = if let Some(arg_node) = argument_list_node {
-            self.extract_argument_types_with_return_types(source, &arg_node, field_types, import_map, method_return_types)
+            self.extract_argument_types_with_return_types(source, &arg_node, field_types, import_map, method_return_types, package_name)
         } else {
             Vec::new()
         };
@@ -1592,7 +1617,7 @@ impl JavaParser {
         // 处理链式调用：obj.method1().method2()
         if let Some(obj_method_node) = object_method_invocation {
             // 先推断前一个方法调用的返回类型
-            if let Some(object_type) = self.infer_method_return_type_with_map(source, &obj_method_node, field_types, import_map, method_return_types) {
+            if let Some(object_type) = self.infer_method_return_type_with_map(source, &obj_method_node, field_types, import_map, method_return_types, package_name) {
                 // 使用返回类型作为当前方法的对象类型
                 let method_name = identifiers.last()?;
                 
@@ -1872,8 +1897,9 @@ impl JavaParser {
     }
     
     /// 提取数据库操作
-    fn extract_return_type(&self, source: &str, method_node: &tree_sitter::Node) -> Option<String> {
+    fn extract_return_type(&self, source: &str, method_node: &tree_sitter::Node, tree: &tree_sitter::Tree) -> Option<String> {
         let mut cursor = method_node.walk();
+        let mut simple_type = None;
         
         for child in method_node.children(&mut cursor) {
             // 查找返回类型节点
@@ -1881,19 +1907,40 @@ impl JavaParser {
                 return Some("void".to_string());
             } else if child.kind() == "type_identifier" || child.kind() == "integral_type" {
                 if let Some(text) = source.get(child.byte_range()) {
-                    return Some(text.to_string());
+                    simple_type = Some(text.to_string());
+                    break;
                 }
             } else if child.kind() == "generic_type" {
                 // 处理泛型类型，如 List<User>
                 if let Some(text) = source.get(child.byte_range()) {
-                    return Some(text.to_string());
+                    simple_type = Some(remove_generics(text));
+                    break;
                 }
             } else if child.kind() == "array_type" {
                 // 处理数组类型，如 User[]
                 if let Some(text) = source.get(child.byte_range()) {
-                    return Some(text.to_string());
+                    simple_type = Some(remove_generics(text));
+                    break;
+                }
+            } else if child.kind() == "scoped_type_identifier" {
+                // 处理完整包名类型，如 com.example.User
+                if let Some(text) = source.get(child.byte_range()) {
+                    return Some(remove_generics(text));
                 }
             }
+        }
+        
+        // 如果找到了简单类型，解析为完整类名
+        if let Some(type_name) = simple_type {
+            // 对于基本类型和常用类型，保持原样
+            if is_primitive_or_common_type(&type_name) {
+                return Some(type_name);
+            }
+            
+            // 解析为完整类名
+            let import_map = self.build_import_map(source, tree);
+            let package_name = self.extract_package_name(source, tree);
+            return Some(self.resolve_full_class_name(&type_name, &import_map, &package_name));
         }
         
         None
@@ -2267,7 +2314,7 @@ impl JavaParser {
                     // 处理普通方法声明和接口方法声明
                     if body_child.kind() == "method_declaration" {
                         // 先收集返回类型
-                        if let Some(return_type) = self.extract_return_type(source, &body_child) {
+                        if let Some(return_type) = self.extract_return_type(source, &body_child, tree) {
                             // 获取方法名
                             if let Some(method_name) = self.extract_method_name(source, &body_child) {
                                 // 获取参数类型
@@ -2313,6 +2360,7 @@ impl JavaParser {
             class_name,
             &mut methods,
             method_return_types,
+            tree,
         );
         
         methods
@@ -2327,12 +2375,24 @@ impl JavaParser {
         class_name: &str,
         methods: &mut Vec<MethodInfo>,
         method_return_types: &mut MethodReturnTypeMap,
+        tree: &tree_sitter::Tree,
     ) {
         // 提取类的所有字段
         let fields = self.extract_class_fields(source, class_node);
         
+        // 获取导入映射和包名，用于解析完整类名
+        let import_map = self.build_import_map(source, tree);
+        let package_name = self.extract_package_name(source, tree);
+        
         // 为每个字段检查是否存在对应的 getter
-        for (field_name, field_type) in fields {
+        for (field_name, simple_field_type) in fields {
+            // 解析字段类型为完整类名
+            let field_type = if is_primitive_or_common_type(&simple_field_type) {
+                simple_field_type
+            } else {
+                self.resolve_full_class_name(&simple_field_type, &import_map, &package_name)
+            };
+            
             // 生成 getter 方法名：foo -> getFoo
             let getter_name = format!("get{}{}", 
                 field_name.chars().next().unwrap().to_uppercase(),
@@ -2777,10 +2837,10 @@ public class TestService {
             .find(|c| c.target.starts_with("com.example.DataProcessor::process"))
             .expect("Should find process call");
         
-        // 验证：应该是 process(User) 而不是 process(Object)
+        // 验证：应该是 process(com.example.User) 而不是 process(Object)
         assert_eq!(
             first_process_call.target,
-            "com.example.DataProcessor::process(User)",
+            "com.example.DataProcessor::process(com.example.User)",
             "Should infer User type from findUser() return type"
         );
     }
@@ -2790,6 +2850,8 @@ public class TestService {
         let parser = JavaParser::new().unwrap();
         let source = r#"
 package com.example;
+
+import com.user.User;
 
 public class UserRepository {
     private User user;
@@ -2856,7 +2918,7 @@ public class TestService {
         // 验证：应该是 process(User) 而不是 process(Object)
         assert_eq!(
             first_process_call.target,
-            "com.example.DataProcessor::process(User)",
+            "com.example.DataProcessor::process(com.user.User)",
             "Should infer User type from getUser() return type"
         );
     }
@@ -2925,10 +2987,10 @@ public class TestService {
             .find(|c| c.target.starts_with("com.example.TestService::process"))
             .expect("Should find process call");
         
-        // 验证：应该是 process(User) 而不是 process(Object)
+        // 验证：应该是 process(com.example.User,String) 而不是 process(Object,String)
         assert_eq!(
             first_process_call.target,
-            "com.example.TestService::process(User,String)",
+            "com.example.TestService::process(com.example.User,String)",
             "Should infer User type from getUser() return type"
         );
     }

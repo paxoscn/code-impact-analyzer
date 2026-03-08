@@ -27,7 +27,8 @@ fn test_http_endpoint_config_association() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+        return_type: None,
+    
     };
     
     // 添加 HTTP 消费者（调用该接口的客户端代码）
@@ -41,11 +42,12 @@ fn test_http_endpoint_config_association() {
                 line: 35,
             },
         ],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     index.test_index_method(&provider).unwrap();
@@ -95,6 +97,7 @@ fn test_kafka_topic_config_association() {
         full_qualified_name: "com.example.events.UserEventPublisher::publishUserEvent".to_string(),
         file_path: std::path::PathBuf::from("test.java"),        line_range: (10, 25),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![
             KafkaOperation {
@@ -105,7 +108,7 @@ fn test_kafka_topic_config_association() {
         ],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     // 添加 Kafka 消费者
@@ -114,6 +117,7 @@ fn test_kafka_topic_config_association() {
         full_qualified_name: "com.example.handlers.UserEventHandler::handleUserEvent".to_string(),
         file_path: std::path::PathBuf::from("test.java"),        line_range: (30, 50),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![
             KafkaOperation {
@@ -124,7 +128,7 @@ fn test_kafka_topic_config_association() {
         ],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     index.test_index_method(&producer).unwrap();
@@ -163,6 +167,7 @@ fn test_database_table_config_association() {
         full_qualified_name: "com.example.repository.UserRepository::findUserById".to_string(),
         file_path: std::path::PathBuf::from("test.java"),        line_range: (10, 20),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![],
         db_operations: vec![
@@ -173,7 +178,7 @@ fn test_database_table_config_association() {
             },
         ],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     // 添加数据库写入者
@@ -182,6 +187,7 @@ fn test_database_table_config_association() {
         full_qualified_name: "com.example.repository.UserRepository::saveUser".to_string(),
         file_path: std::path::PathBuf::from("test.java"),        line_range: (25, 35),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![],
         db_operations: vec![
@@ -192,7 +198,7 @@ fn test_database_table_config_association() {
             },
         ],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     let updater = MethodInfo {
@@ -200,6 +206,7 @@ fn test_database_table_config_association() {
         full_qualified_name: "com.example.repository.UserRepository::updateUser".to_string(),
         file_path: std::path::PathBuf::from("test.java"),        line_range: (40, 50),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![],
         db_operations: vec![
@@ -210,7 +217,7 @@ fn test_database_table_config_association() {
             },
         ],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     index.test_index_method(&reader).unwrap();
@@ -252,6 +259,7 @@ fn test_redis_prefix_config_association() {
         full_qualified_name: "com.example.cache.UserCache::getUserFromCache".to_string(),
         file_path: std::path::PathBuf::from("test.java"),        line_range: (10, 20),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![],
         db_operations: vec![],
@@ -262,6 +270,7 @@ fn test_redis_prefix_config_association() {
                 line: 15,
             },
         ],
+    
     };
     
     // 添加 Redis 写入者
@@ -280,6 +289,8 @@ fn test_redis_prefix_config_association() {
                 line: 30,
             },
         ],
+        return_type: None,
+    
     };
     
     index.test_index_method(&reader).unwrap();
@@ -339,6 +350,8 @@ fn test_mixed_config_association() {
                 line: 30,
             },
         ],
+        return_type: None,
+    
     };
     
     index.test_index_method(&service_method).unwrap();
@@ -402,7 +415,8 @@ fn test_config_association_deduplication() {
         ],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+        return_type: None,
+    
     };
     
     let producer2 = MethodInfo {
@@ -410,6 +424,7 @@ fn test_config_association_deduplication() {
         full_qualified_name: "com.example.Producer2::sendEvent2".to_string(),
         file_path: std::path::PathBuf::from("test.java"),        line_range: (30, 40),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![
             KafkaOperation {
@@ -420,7 +435,7 @@ fn test_config_association_deduplication() {
         ],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     index.test_index_method(&producer1).unwrap();

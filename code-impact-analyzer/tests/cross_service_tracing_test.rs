@@ -27,7 +27,8 @@ fn test_http_bidirectional_tracing() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+        return_type: None,
+    
     };
     
     // 索引提供者
@@ -74,6 +75,7 @@ fn test_kafka_producer_to_consumer_tracing() {
         file_path: std::path::PathBuf::from("test.java"),
         line_range: (10, 20),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![KafkaOperation {
             operation_type: KafkaOpType::Produce,
@@ -82,7 +84,7 @@ fn test_kafka_producer_to_consumer_tracing() {
         }],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     // 创建 Kafka 消费者方法
@@ -92,6 +94,7 @@ fn test_kafka_producer_to_consumer_tracing() {
         file_path: std::path::PathBuf::from("test.java"),
         line_range: (30, 40),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![KafkaOperation {
             operation_type: KafkaOpType::Consume,
@@ -100,7 +103,7 @@ fn test_kafka_producer_to_consumer_tracing() {
         }],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     // 索引生产者和消费者
@@ -159,6 +162,7 @@ fn test_kafka_consumer_to_producer_tracing() {
         file_path: std::path::PathBuf::from("test.java"),
         line_range: (10, 20),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![KafkaOperation {
             operation_type: KafkaOpType::Produce,
@@ -167,7 +171,7 @@ fn test_kafka_consumer_to_producer_tracing() {
         }],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     // 创建 Kafka 消费者方法
@@ -177,6 +181,7 @@ fn test_kafka_consumer_to_producer_tracing() {
         file_path: std::path::PathBuf::from("test.java"),
         line_range: (30, 40),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![KafkaOperation {
             operation_type: KafkaOpType::Consume,
@@ -185,7 +190,7 @@ fn test_kafka_consumer_to_producer_tracing() {
         }],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     // 索引生产者和消费者
@@ -224,6 +229,7 @@ fn test_database_writer_to_reader_tracing() {
         file_path: std::path::PathBuf::from("test.java"),
         line_range: (10, 20),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![],
         db_operations: vec![DbOperation {
@@ -232,7 +238,7 @@ fn test_database_writer_to_reader_tracing() {
             line: 15,
         }],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     // 创建数据库读取者方法
@@ -242,6 +248,7 @@ fn test_database_writer_to_reader_tracing() {
         file_path: std::path::PathBuf::from("test.java"),
         line_range: (30, 40),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![],
         db_operations: vec![DbOperation {
@@ -250,7 +257,7 @@ fn test_database_writer_to_reader_tracing() {
             line: 35,
         }],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     // 索引写入者和读取者
@@ -309,6 +316,7 @@ fn test_database_reader_to_writer_tracing() {
         file_path: std::path::PathBuf::from("test.java"),
         line_range: (10, 20),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![],
         db_operations: vec![DbOperation {
@@ -317,7 +325,7 @@ fn test_database_reader_to_writer_tracing() {
             line: 15,
         }],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     // 创建数据库读取者方法
@@ -327,6 +335,7 @@ fn test_database_reader_to_writer_tracing() {
         file_path: std::path::PathBuf::from("test.java"),
         line_range: (30, 40),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![],
         db_operations: vec![DbOperation {
@@ -335,7 +344,7 @@ fn test_database_reader_to_writer_tracing() {
             line: 35,
         }],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     // 索引写入者和读取者
@@ -376,6 +385,7 @@ fn test_redis_writer_to_reader_tracing() {
         file_path: std::path::PathBuf::from("test.java"),
         line_range: (10, 20),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![],
         db_operations: vec![],
@@ -384,6 +394,7 @@ fn test_redis_writer_to_reader_tracing() {
             key_pattern: "session:*".to_string(),
             line: 15,
         }],
+    
     };
     
     // 创建 Redis 读取者方法
@@ -401,6 +412,8 @@ fn test_redis_writer_to_reader_tracing() {
             key_pattern: "session:*".to_string(),
             line: 35,
         }],
+        return_type: None,
+    
     };
     
     // 索引写入者和读取者
@@ -467,6 +480,8 @@ fn test_redis_reader_to_writer_tracing() {
             key_pattern: "user:*".to_string(),
             line: 15,
         }],
+        return_type: None,
+    
     };
     
     // 创建 Redis 读取者方法
@@ -484,6 +499,8 @@ fn test_redis_reader_to_writer_tracing() {
             key_pattern: "user:*".to_string(),
             line: 35,
         }],
+        return_type: None,
+    
     };
     
     // 索引写入者和读取者
@@ -536,7 +553,8 @@ fn test_complex_cross_service_tracing() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+        return_type: None,
+    
     };
     
     let service_method = MethodInfo {
@@ -545,6 +563,7 @@ fn test_complex_cross_service_tracing() {
         file_path: std::path::PathBuf::from("test.java"),
         line_range: (30, 40),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![KafkaOperation {
             operation_type: KafkaOpType::Produce,
@@ -553,7 +572,7 @@ fn test_complex_cross_service_tracing() {
         }],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     let kafka_consumer = MethodInfo {
@@ -562,6 +581,7 @@ fn test_complex_cross_service_tracing() {
         file_path: std::path::PathBuf::from("test.java"),
         line_range: (50, 60),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![KafkaOperation {
             operation_type: KafkaOpType::Consume,
@@ -574,7 +594,7 @@ fn test_complex_cross_service_tracing() {
             line: 58,
         }],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     let db_reader = MethodInfo {
@@ -583,6 +603,7 @@ fn test_complex_cross_service_tracing() {
         file_path: std::path::PathBuf::from("test.java"),
         line_range: (70, 80),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![],
         db_operations: vec![DbOperation {
@@ -595,6 +616,7 @@ fn test_complex_cross_service_tracing() {
             key_pattern: "event:*".to_string(),
             line: 78,
         }],
+    
     };
     
     let redis_reader = MethodInfo {
@@ -611,6 +633,8 @@ fn test_complex_cross_service_tracing() {
             key_pattern: "event:*".to_string(),
             line: 95,
         }],
+        return_type: None,
+    
     };
     
     // 索引所有方法

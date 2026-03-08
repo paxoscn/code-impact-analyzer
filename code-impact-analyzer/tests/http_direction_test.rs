@@ -23,7 +23,8 @@ fn test_http_interface_provider_direction() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+        return_type: None,
+    
     };
     
     index.index_method(&provider).unwrap();
@@ -54,6 +55,7 @@ fn test_feign_client_consumer_direction() {
         file_path: PathBuf::from("UserClient.java"),
         line_range: (10, 15),
         calls: vec![],
+        return_type: None,
         http_annotations: Some(HttpAnnotation {
             method: HttpMethod::GET,
             path: "user-service/api/users".to_string(),
@@ -63,7 +65,7 @@ fn test_feign_client_consumer_direction() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     index.index_method(&consumer).unwrap();
@@ -94,6 +96,7 @@ fn test_feign_client_with_base_path() {
         file_path: PathBuf::from("BasicInfoFeign.java"),
         line_range: (10, 15),
         calls: vec![],
+        return_type: None,
         http_annotations: Some(HttpAnnotation {
             method: HttpMethod::POST,
             path: "hll-basic-info-api/hll-basic-info-api/feign/shop/copy/info".to_string(),
@@ -103,7 +106,7 @@ fn test_feign_client_with_base_path() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     index.index_method(&consumer).unwrap();
@@ -130,6 +133,7 @@ fn test_http_provider_and_consumer_different_endpoints() {
         file_path: PathBuf::from("UserController.java"),
         line_range: (10, 15),
         calls: vec![],
+        return_type: None,
         http_annotations: Some(HttpAnnotation {
             method: HttpMethod::POST,
             path: "md-user-service/api/users".to_string(),
@@ -139,7 +143,7 @@ fn test_http_provider_and_consumer_different_endpoints() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     // 创建一个 Feign 客户端调用
@@ -149,6 +153,7 @@ fn test_http_provider_and_consumer_different_endpoints() {
         file_path: PathBuf::from("OrderClient.java"),
         line_range: (20, 25),
         calls: vec![],
+        return_type: None,
         http_annotations: Some(HttpAnnotation {
             method: HttpMethod::GET,
             path: "order-service/api/orders".to_string(),
@@ -158,7 +163,7 @@ fn test_http_provider_and_consumer_different_endpoints() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     index.index_method(&provider).unwrap();

@@ -2741,6 +2741,16 @@ impl JavaParser {
             tree,
         );
         
+        // 自动生成 setter 方法（如果字段存在但 setter 不存在）
+        self.generate_setters_for_fields(
+            source,
+            file_path,
+            class_node,
+            class_name,
+            &mut methods,
+            tree,
+        );
+        
         methods
     }
     
@@ -2801,6 +2811,63 @@ impl JavaParser {
                 
                 // 添加返回类型映射
                 method_return_types.insert(method_signature, field_type);
+            }
+        }
+    }
+    
+    /// 为类字段自动生成 setter 方法（如果不存在）
+    fn generate_setters_for_fields(
+        &self,
+        source: &str,
+        file_path: &Path,
+        class_node: &tree_sitter::Node,
+        class_name: &str,
+        methods: &mut Vec<MethodInfo>,
+        tree: &tree_sitter::Tree,
+    ) {
+        // 提取类的所有字段
+        let fields = self.extract_class_fields(source, class_node);
+        
+        // 获取导入映射和包名，用于解析完整类名
+        let import_map = self.build_import_map(source, tree);
+        let package_name = self.extract_package_name(source, tree);
+        
+        // 为每个字段检查是否存在对应的 setter
+        for (field_name, simple_field_type) in fields {
+            // 解析字段类型为完整类名
+            let field_type = if is_primitive_or_common_type(&simple_field_type) {
+                simple_field_type
+            } else {
+                self.resolve_full_class_name(&simple_field_type, &import_map, &package_name)
+            };
+            
+            // 生成 setter 方法名：foo -> setFoo
+            let setter_name = format!("set{}{}", 
+                field_name.chars().next().unwrap().to_uppercase(),
+                &field_name[1..]
+            );
+            
+            // 检查是否已经存在这个 setter 方法
+            let setter_exists = methods.iter().any(|m| m.name == setter_name);
+            
+            if !setter_exists {
+                // 生成 setter 方法签名：setFoo(FieldType)
+                let method_signature = format!("{}::{}({})", class_name, setter_name, field_type);
+                let line = class_node.start_position().row + 1;
+                
+                // 添加到方法列表
+                methods.push(MethodInfo {
+                    name: setter_name.clone(),
+                    full_qualified_name: method_signature.clone(),
+                    file_path: file_path.to_path_buf(),
+                    line_range: (line, line),
+                    calls: vec![],
+                    http_annotations: None,
+                    kafka_operations: vec![],
+                    db_operations: vec![],
+                    redis_operations: vec![],
+                    return_type: Some("void".to_string()),
+                });
             }
         }
     }
@@ -4354,3 +4421,114 @@ public class TestService {
         );
     }
 
+
+    #[test]
+    fn test_auto_generated_getters_and_setters() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+package com.example;
+
+public class User {
+    private String name;
+    private int age;
+    private boolean active;
+}
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("User.java")).unwrap();
+        assert_eq!(result.classes.len(), 1);
+        
+        let user_class = &result.classes[0];
+        assert_eq!(user_class.name, "com.example.User");
+        
+        // 应该有 3 个字段，所以应该有 6 个方法（3个getter + 3个setter）
+        assert_eq!(user_class.methods.len(), 6, "Should have 3 getters and 3 setters");
+        
+        // 验证 getter 方法
+        let get_name = user_class.methods.iter()
+            .find(|m| m.name == "getName")
+            .expect("Should have getName() method");
+        assert_eq!(get_name.full_qualified_name, "com.example.User::getName()");
+        assert_eq!(get_name.return_type, Some("String".to_string()));
+        
+        let get_age = user_class.methods.iter()
+            .find(|m| m.name == "getAge")
+            .expect("Should have getAge() method");
+        assert_eq!(get_age.full_qualified_name, "com.example.User::getAge()");
+        assert_eq!(get_age.return_type, Some("int".to_string()));
+        
+        let get_active = user_class.methods.iter()
+            .find(|m| m.name == "getActive")
+            .expect("Should have getActive() method");
+        assert_eq!(get_active.full_qualified_name, "com.example.User::getActive()");
+        assert_eq!(get_active.return_type, Some("boolean".to_string()));
+        
+        // 验证 setter 方法
+        let set_name = user_class.methods.iter()
+            .find(|m| m.name == "setName")
+            .expect("Should have setName() method");
+        assert_eq!(set_name.full_qualified_name, "com.example.User::setName(String)");
+        assert_eq!(set_name.return_type, Some("void".to_string()));
+        
+        let set_age = user_class.methods.iter()
+            .find(|m| m.name == "setAge")
+            .expect("Should have setAge() method");
+        assert_eq!(set_age.full_qualified_name, "com.example.User::setAge(int)");
+        assert_eq!(set_age.return_type, Some("void".to_string()));
+        
+        let set_active = user_class.methods.iter()
+            .find(|m| m.name == "setActive")
+            .expect("Should have setActive() method");
+        assert_eq!(set_active.full_qualified_name, "com.example.User::setActive(boolean)");
+        assert_eq!(set_active.return_type, Some("void".to_string()));
+    }
+
+    #[test]
+    fn test_no_duplicate_getters_and_setters() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+package com.example;
+
+public class User {
+    private String name;
+    
+    // 已经定义了 getter，不应该重复生成
+    public String getName() {
+        return name;
+    }
+    
+    // 已经定义了 setter，不应该重复生成
+    public void setName(String name) {
+        this.name = name;
+    }
+}
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("User.java")).unwrap();
+        assert_eq!(result.classes.len(), 1);
+        
+        let user_class = &result.classes[0];
+        
+        // 应该只有 2 个方法（已定义的 getter 和 setter），不应该重复生成
+        assert_eq!(user_class.methods.len(), 2, "Should not duplicate existing methods");
+        
+        // 验证方法名
+        let method_names: Vec<&str> = user_class.methods.iter()
+            .map(|m| m.name.as_str())
+            .collect();
+        
+        assert!(method_names.contains(&"getName"));
+        assert!(method_names.contains(&"setName"));
+        
+        // 确保没有重复
+        assert_eq!(
+            user_class.methods.iter().filter(|m| m.name == "getName").count(),
+            1,
+            "Should have exactly one getName method"
+        );
+        assert_eq!(
+            user_class.methods.iter().filter(|m| m.name == "setName").count(),
+            1,
+            "Should have exactly one setName method"
+        );
+    }

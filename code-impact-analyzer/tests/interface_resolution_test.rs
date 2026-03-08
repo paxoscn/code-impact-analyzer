@@ -18,8 +18,9 @@ fn test_interface_with_single_implementation() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
-            return_type: None,
+        return_type: None,
+    
+    
     };
     
     // 创建实现类方法
@@ -29,12 +30,13 @@ fn test_interface_with_single_implementation() {
         file_path: PathBuf::from("ShopCopyServiceImpl.java"),
         line_range: (20, 30),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
-            return_type: None,
+    
+    
     };
     
     // 索引方法

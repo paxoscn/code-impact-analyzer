@@ -24,7 +24,9 @@ fn test_interface_upstream_tracing() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+        return_type: None,
+    
+    
     };
     
     // 定义实现类方法
@@ -34,11 +36,13 @@ fn test_interface_upstream_tracing() {
         file_path: PathBuf::from("ServiceImpl.java"),
         line_range: (20, 30),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+    
+    
     };
     
     // 定义 Controller 方法，调用接口方法
@@ -53,11 +57,12 @@ fn test_interface_upstream_tracing() {
                 line: 18,
             }
         ],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     // 创建接口类
@@ -65,6 +70,7 @@ fn test_interface_upstream_tracing() {
         name: "com.example.Service".to_string(),
         line_range: (5, 15),
         methods: vec![interface_method.clone()],
+        return_type: None,
         is_interface: true,
         implements: vec![],
     };
@@ -172,7 +178,9 @@ fn test_multiple_interfaces_upstream_tracing() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+        return_type: None,
+    
+    
     };
     
     // 接口1方法
@@ -182,11 +190,13 @@ fn test_multiple_interfaces_upstream_tracing() {
         file_path: PathBuf::from("Interface1.java"),
         line_range: (10, 12),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+    
+    
     };
     
     // 接口2方法
@@ -196,11 +206,13 @@ fn test_multiple_interfaces_upstream_tracing() {
         file_path: PathBuf::from("Interface2.java"),
         line_range: (10, 12),
         calls: vec![],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+    
+    
     };
     
     // Caller1 调用 Interface1::process
@@ -215,11 +227,12 @@ fn test_multiple_interfaces_upstream_tracing() {
                 line: 18,
             }
         ],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     // Caller2 调用 Interface2::process
@@ -234,11 +247,12 @@ fn test_multiple_interfaces_upstream_tracing() {
                 line: 18,
             }
         ],
+        return_type: None,
         http_annotations: None,
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+    
     };
     
     // 创建类
@@ -246,6 +260,7 @@ fn test_multiple_interfaces_upstream_tracing() {
         name: "com.example.MultiImpl".to_string(),
         line_range: (10, 35),
         methods: vec![impl_method.clone()],
+        return_type: None,
         is_interface: false,
         implements: vec![
             "com.example.Interface1".to_string(),

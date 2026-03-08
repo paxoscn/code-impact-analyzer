@@ -29,7 +29,9 @@ fn test_index_lifecycle() {
         kafka_operations: vec![],
         db_operations: vec![],
         redis_operations: vec![],
-            return_type: None,
+        return_type: None,
+    
+    
     };
     
     code_index.test_index_method(&method).unwrap();
@@ -102,12 +104,13 @@ fn test_index_reload_after_save() {
             file_path: PathBuf::from("Test.java"),
             line_range: (i * 10, i * 10 + 10),
             calls: vec![],
+        return_type: None,
             http_annotations: None,
             kafka_operations: vec![],
             db_operations: vec![],
             redis_operations: vec![],
-            return_type: None,
-        };
+        
+    };
         
         code_index.test_index_method(&method).unwrap();
     }
@@ -147,12 +150,13 @@ fn test_multiple_save_and_load_cycles() {
             file_path: PathBuf::from("Test.java"),
             line_range: (cycle * 10, cycle * 10 + 10),
             calls: vec![],
+        return_type: None,
             http_annotations: None,
             kafka_operations: vec![],
             db_operations: vec![],
             redis_operations: vec![],
-            return_type: None,
-        };
+        
+    };
         
         code_index.test_index_method(&method).unwrap();
         
@@ -186,12 +190,13 @@ fn test_index_info_after_save() {
             file_path: PathBuf::from("Test.java"),
             line_range: (i * 10, i * 10 + 10),
             calls: vec![],
+        return_type: None,
             http_annotations: None,
             kafka_operations: vec![],
             db_operations: vec![],
             redis_operations: vec![],
-            return_type: None,
-        };
+        
+    };
         
         code_index.test_index_method(&method).unwrap();
     }
@@ -228,6 +233,7 @@ fn test_interface_mappings_persistence() {
         name: "com.example.ServiceImpl1".to_string(),
         line_range: (1, 20),
         methods: vec![],
+        return_type: None,
         is_interface: false,
         implements: vec!["com.example.Service".to_string()],
     };

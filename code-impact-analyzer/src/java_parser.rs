@@ -2302,6 +2302,7 @@ impl JavaParser {
         let mut identifiers = Vec::new();
         let mut argument_list_node = None;
         let mut object_method_invocation = None;
+        let mut field_access_object = None;
         
         for child in method_invocation_node.children(&mut cursor) {
             if child.kind() == "identifier" {
@@ -2311,6 +2312,9 @@ impl JavaParser {
             } else if child.kind() == "method_invocation" {
                 // 链式调用：obj.method1().method2()
                 object_method_invocation = Some(child);
+            } else if child.kind() == "field_access" {
+                // 字段访问作为对象：Foo.BAR.method()
+                field_access_object = Some(child);
             } else if child.kind() == "argument_list" {
                 argument_list_node = Some(child);
             }
@@ -2326,6 +2330,33 @@ impl JavaParser {
         } else {
             Vec::new()
         };
+        
+        // 处理 field_access 作为对象的情况：Foo.BAR.method()
+        if let Some(field_access_node) = field_access_object {
+            if !identifiers.is_empty() {
+                let method_name = &identifiers[identifiers.len() - 1];
+                let field_access_text = &source[field_access_node.byte_range()];
+                
+                // 推断 field_access 的类型
+                if let Some(object_type) = self.infer_field_access_type(
+                    field_access_text,
+                    import_map,
+                    package_name,
+                ) {
+                    // 构建方法签名
+                    let method_signature = if arg_types.is_empty() {
+                        format!("{}::{}()", object_type, method_name)
+                    } else {
+                        format!("{}::{}({})", object_type, method_name, arg_types.join(","))
+                    };
+                    
+                    // 从映射中查找返回类型
+                    if let Some(return_type) = method_return_types.get(&method_signature) {
+                        return Some(return_type.clone());
+                    }
+                }
+            }
+        }
         
         // 处理链式调用：obj.method1().method2()
         if let Some(obj_method_node) = object_method_invocation {

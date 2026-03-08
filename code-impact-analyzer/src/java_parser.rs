@@ -942,7 +942,8 @@ impl JavaParser {
                         if let Some(param_type) = self.extract_parameter_type(source, &param_child) {
                             // 解析为完整类名
                             let full_type = if is_primitive_or_common_type(&param_type) {
-                                param_type
+                                // 对基本类型进行自动装箱
+                                autobox_type(&param_type)
                             } else {
                                 self.resolve_full_class_name(&param_type, &import_map, &package_name)
                             };
@@ -3654,7 +3655,7 @@ public class UserService {
         // 测试多参数方法
         let method2 = &class.methods[1];
         assert_eq!(method2.name, "updateUser");
-        assert_eq!(method2.full_qualified_name, "com.example.UserService::updateUser(String,Integer,boolean)");
+        assert_eq!(method2.full_qualified_name, "com.example.UserService::updateUser(String,Integer,Boolean)");
         
         // 测试泛型参数方法（泛型被移除）
         let method3 = &class.methods[2];
@@ -3703,10 +3704,10 @@ public class UserController {
         assert_eq!(method.calls.len(), 3);
         
         // 第一个调用：字面量参数
-        assert_eq!(method.calls[0].target, "com.example.UserService::updateUser(String,Integer,boolean)");
+        assert_eq!(method.calls[0].target, "com.example.UserService::updateUser(String,Integer,Boolean)");
         
         // 第二个调用：变量参数
-        assert_eq!(method.calls[1].target, "com.example.UserService::updateUser(String,Integer,boolean)");
+        assert_eq!(method.calls[1].target, "com.example.UserService::updateUser(String,Integer,Boolean)");
         
         // 第三个调用：混合参数
         assert_eq!(method.calls[2].target, "com.example.UserService::processData(String,Integer,String)");
@@ -3743,7 +3744,7 @@ public class TestService {
         assert_eq!(method.calls.len(), 2);
         
         // 第一个调用：使用方法参数
-        assert_eq!(method.calls[0].target, "com.example.UserRepository::updateUser(String,Integer,boolean)");
+        assert_eq!(method.calls[0].target, "com.example.UserRepository::updateUser(String,Integer,Boolean)");
         
         // 第二个调用：使用方法参数
         assert_eq!(method.calls[1].target, "com.example.UserRepository::findUser(String)");

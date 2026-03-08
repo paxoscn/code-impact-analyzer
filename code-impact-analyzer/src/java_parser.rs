@@ -1461,6 +1461,9 @@ impl JavaParser {
         if node.kind() == "local_variable_declaration" {
             // 提取本地变量的类型和名称
             self.extract_field_type_from_declaration(source, node, field_types);
+        } else if node.kind() == "lambda_expression" {
+            // 提取 lambda 表达式的参数类型
+            self.extract_lambda_parameter_types(source, node, field_types);
         }
         
         let mut cursor = node.walk();
@@ -1512,6 +1515,289 @@ impl JavaParser {
         if let (Some(name), Some(type_name)) = (field_name, field_type) {
             field_types.insert(name, type_name);
         }
+    }
+    
+    /// 提取 lambda 表达式的参数类型
+    /// 例如：list.stream().map(item -> ...) 中的 item 参数
+    fn extract_lambda_parameter_types(
+        &self,
+        source: &str,
+        lambda_node: tree_sitter::Node,
+        field_types: &mut std::collections::HashMap<String, String>,
+    ) {
+        // 查找 lambda 参数
+        let mut cursor = lambda_node.walk();
+        let mut param_names = Vec::new();
+        
+        for child in lambda_node.children(&mut cursor) {
+            if child.kind() == "identifier" {
+                // 单个参数：item -> ...
+                if let Some(param_name) = source.get(child.byte_range()) {
+                    param_names.push(param_name.to_string());
+                }
+            } else if child.kind() == "inferred_parameters" {
+                // 多个参数：(a, b) -> ...
+                let mut param_cursor = child.walk();
+                for param_child in child.children(&mut param_cursor) {
+                    if param_child.kind() == "identifier" {
+                        if let Some(param_name) = source.get(param_child.byte_range()) {
+                            param_names.push(param_name.to_string());
+                        }
+                    }
+                }
+            } else if child.kind() == "formal_parameters" {
+                // 显式类型参数：(String a, int b) -> ...
+                let mut param_cursor = child.walk();
+                for param_child in child.children(&mut param_cursor) {
+                    if param_child.kind() == "formal_parameter" {
+                        // 提取参数名和类型
+                        self.extract_parameter_name_and_type(source, &param_child, field_types);
+                    }
+                }
+                return; // 显式类型参数已处理完毕
+            }
+        }
+        
+        // 如果有参数名但没有显式类型，尝试从上下文推断类型
+        if !param_names.is_empty() {
+            // 查找 lambda 的父节点，看是否是 stream().map() 等操作
+            if let Some(parent) = lambda_node.parent() {
+                if parent.kind() == "argument_list" {
+                    // lambda 作为参数传递
+                    if let Some(method_invocation) = parent.parent() {
+                        if method_invocation.kind() == "method_invocation" {
+                            // 尝试推断 lambda 参数类型
+                            if let Some(param_type) = self.infer_lambda_parameter_type_from_stream(
+                                source,
+                                &method_invocation,
+                                field_types,
+                            ) {
+                                // 将推断的类型赋给第一个参数（通常 stream 操作只有一个参数）
+                                if let Some(first_param) = param_names.first() {
+                                    field_types.insert(first_param.clone(), param_type);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    /// 从 stream 操作推断 lambda 参数类型
+    /// 例如：list.stream().map(item -> ...) 中，如果 list 是 List<Tac>，则 item 是 Tac
+    fn infer_lambda_parameter_type_from_stream(
+        &self,
+        source: &str,
+        method_invocation: &tree_sitter::Node,
+        field_types: &std::collections::HashMap<String, String>,
+    ) -> Option<String> {
+        // 查找方法名
+        let mut cursor = method_invocation.walk();
+        let mut method_name = None;
+        let mut object_node = None;
+        
+        for child in method_invocation.children(&mut cursor) {
+            if child.kind() == "identifier" {
+                if let Some(name) = source.get(child.byte_range()) {
+                    method_name = Some(name.to_string());
+                }
+            } else if child.kind() == "method_invocation" {
+                // 链式调用的对象部分
+                object_node = Some(child);
+            } else if child.kind() == "field_access" {
+                // 字段访问作为对象
+                object_node = Some(child);
+            }
+        }
+        
+        // 检查是否是 stream 相关的方法（map, filter, forEach 等）
+        if let Some(method) = &method_name {
+            if method == "map" || method == "filter" || method == "forEach" 
+                || method == "flatMap" || method == "peek" {
+                // 尝试从对象推断类型
+                if let Some(obj_node) = object_node {
+                    return self.infer_stream_element_type(source, &obj_node, field_types);
+                }
+            }
+        }
+        
+        None
+    }
+    
+    /// 推断 stream 的元素类型
+    /// 例如：list.stream() 中，如果 list 是 List<Tac>，则 stream 元素是 Tac
+    fn infer_stream_element_type(
+        &self,
+        source: &str,
+        stream_node: &tree_sitter::Node,
+        field_types: &std::collections::HashMap<String, String>,
+    ) -> Option<String> {
+        // 如果是 method_invocation，检查是否是 stream() 调用
+        if stream_node.kind() == "method_invocation" {
+            let mut cursor = stream_node.walk();
+            let mut method_name = None;
+            let mut object_node = None;
+            
+            for child in stream_node.children(&mut cursor) {
+                if child.kind() == "identifier" {
+                    if let Some(name) = source.get(child.byte_range()) {
+                        method_name = Some(name.to_string());
+                    }
+                } else if child.kind() == "method_invocation" {
+                    object_node = Some(child);
+                } else if child.kind() == "field_access" {
+                    object_node = Some(child);
+                }
+            }
+            
+            // 如果是 stream() 方法，从对象推断类型
+            if method_name.as_deref() == Some("stream") {
+                if let Some(obj_node) = object_node {
+                    return self.infer_collection_element_type(source, &obj_node, field_types);
+                }
+            } else if method_name.as_deref() == Some("map") 
+                || method_name.as_deref() == Some("filter")
+                || method_name.as_deref() == Some("flatMap") {
+                // 链式调用，继续向上推断
+                if let Some(obj_node) = object_node {
+                    return self.infer_stream_element_type(source, &obj_node, field_types);
+                }
+            }
+        } else if stream_node.kind() == "field_access" {
+            // 处理 obj.field.stream() 的情况
+            let mut cursor = stream_node.walk();
+            for child in stream_node.children(&mut cursor) {
+                if child.kind() == "identifier" {
+                    // 这是字段名或变量名
+                    if let Some(var_name) = source.get(child.byte_range()) {
+                        if let Some(var_type) = field_types.get(var_name) {
+                            return self.extract_generic_type(var_type);
+                        }
+                    }
+                }
+            }
+        }
+        
+        None
+    }
+    
+    /// 推断集合的元素类型
+    /// 例如：list 是 List<Tac>，则元素类型是 Tac
+    fn infer_collection_element_type(
+        &self,
+        source: &str,
+        collection_node: &tree_sitter::Node,
+        field_types: &std::collections::HashMap<String, String>,
+    ) -> Option<String> {
+        // 如果是 method_invocation，可能是 new ArrayList<>(...) 或其他方法调用
+        if collection_node.kind() == "method_invocation" {
+            // 检查是否是方法调用（如 tic(...)）
+            // 这种情况需要查找方法的返回类型，暂时跳过
+            // 递归处理链式调用
+            let mut cursor = collection_node.walk();
+            for child in collection_node.children(&mut cursor) {
+                if child.kind() == "identifier" {
+                    if let Some(var_name) = source.get(child.byte_range()) {
+                        if let Some(var_type) = field_types.get(var_name) {
+                            return self.extract_generic_type(var_type);
+                        }
+                    }
+                } else if child.kind() == "argument_list" {
+                    // 检查参数列表中是否有变量，可能是 new ArrayList<>(list) 的情况
+                    let mut arg_cursor = child.walk();
+                    for arg_child in child.children(&mut arg_cursor) {
+                        if arg_child.kind() == "identifier" {
+                            if let Some(arg_name) = source.get(arg_child.byte_range()) {
+                                if let Some(arg_type) = field_types.get(arg_name) {
+                                    return self.extract_generic_type(arg_type);
+                                }
+                            }
+                        } else if arg_child.kind() == "object_creation_expression" {
+                            // 处理 new ArrayList<>(list) 的情况
+                            return self.infer_collection_element_type(source, &arg_child, field_types);
+                        }
+                    }
+                }
+            }
+        } else if collection_node.kind() == "object_creation_expression" {
+            // 处理 new ArrayList<>(list) 或 new ArrayList<Tac>()
+            let mut cursor = collection_node.walk();
+            let mut found_generic_type = None;
+            
+            for child in collection_node.children(&mut cursor) {
+                if child.kind() == "generic_type" || child.kind() == "type_identifier" {
+                    // 检查是否有显式的泛型类型
+                    if let Some(type_str) = source.get(child.byte_range()) {
+                        if let Some(generic_type) = self.extract_generic_type(type_str) {
+                            if !generic_type.is_empty() {
+                                found_generic_type = Some(generic_type);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 如果找到了显式的泛型类型，直接返回
+            if let Some(generic_type) = found_generic_type {
+                return Some(generic_type);
+            }
+            
+            // 否则，检查构造函数参数来推断类型
+            let mut cursor2 = collection_node.walk();
+            for child in collection_node.children(&mut cursor2) {
+                if child.kind() == "argument_list" {
+                    // 检查构造函数参数
+                    let mut arg_cursor = child.walk();
+                    for arg_child in child.children(&mut arg_cursor) {
+                        if arg_child.kind() == "identifier" {
+                            if let Some(arg_name) = source.get(arg_child.byte_range()) {
+                                if let Some(arg_type) = field_types.get(arg_name) {
+                                    return self.extract_generic_type(arg_type);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else if collection_node.kind() == "field_access" {
+            // 处理 obj.field 的情况
+            let mut cursor = collection_node.walk();
+            for child in collection_node.children(&mut cursor) {
+                if child.kind() == "identifier" {
+                    if let Some(var_name) = source.get(child.byte_range()) {
+                        if let Some(var_type) = field_types.get(var_name) {
+                            return self.extract_generic_type(var_type);
+                        }
+                    }
+                }
+            }
+        } else if collection_node.kind() == "identifier" {
+            // 直接是变量名
+            if let Some(var_name) = source.get(collection_node.byte_range()) {
+                if let Some(var_type) = field_types.get(var_name) {
+                    return self.extract_generic_type(var_type);
+                }
+            }
+        }
+        
+        None
+    }
+    
+    /// 从泛型类型中提取元素类型
+    /// 例如：List<Tac> -> Tac, ArrayList<String> -> String
+    fn extract_generic_type(&self, type_str: &str) -> Option<String> {
+        // 查找 < 和 > 之间的内容
+        if let Some(start) = type_str.find('<') {
+            if let Some(end) = type_str.rfind('>') {
+                if start < end {
+                    let generic_type = &type_str[start + 1..end];
+                    // 处理嵌套泛型，如 List<List<String>>，这里简化处理，只取第一层
+                    return Some(generic_type.trim().to_string());
+                }
+            }
+        }
+        None
     }
     
     /// 递归遍历节点查找方法调用

@@ -615,6 +615,72 @@ impl AnalysisOrchestrator {
         let mut changed_methods = Vec::new();
         
         for file_change in file_changes {
+            // 首先，检测 Java 字段修改并生成对应的 getter/setter 方法
+            let field_methods = PatchParser::extract_modified_field_methods(file_change);
+            if !field_methods.is_empty() {
+                log::info!(
+                    "Detected {} field modifications in {}, generating getter/setter methods",
+                    field_methods.len(),
+                    file_change.file_path
+                );
+                
+                // 打印检测到的字段方法
+                for fm in &field_methods {
+                    log::info!("  Field method: {}", fm);
+                }
+                
+                // 将字段对应的方法名转换为完全限定名
+                // 需要找到文件中的类名，然后构建完全限定的方法名
+                let file_path = self.workspace_path.join(&file_change.file_path);
+                
+                // 从索引中查找该文件的所有方法，提取完整的类名（包括包名）
+                let mut class_names = std::collections::HashSet::new();
+                log::info!("  Searching for methods in file: {:?}", file_path);
+                for (method_name, method_info) in code_index.methods() {
+                    if method_info.file_path == file_path {
+                        log::info!("  Method in file: {}", method_name);
+                        // 方法名格式是 package.ClassName::methodName(params)
+                        // 提取包名+类名部分（去掉 :: 和方法名）
+                        if let Some(double_colon_pos) = method_name.find("::") {
+                            let class_part = &method_name[..double_colon_pos];
+                            class_names.insert(class_part.to_string());
+                        }
+                    }
+                }
+                
+                log::info!("  Found {} classes in file", class_names.len());
+                for cn in &class_names {
+                    log::info!("    Class: {}", cn);
+                }
+                
+                // 为每个字段方法生成完全限定名
+                for field_method in &field_methods {
+                    for class_name in &class_names {
+                        // 方法名格式是 package.ClassName::methodName(params)
+                        // 如果 field_method 不包含括号，添加空括号（getter 方法）
+                        let method_with_params = if field_method.contains('(') {
+                            field_method.clone()
+                        } else {
+                            format!("{}()", field_method)
+                        };
+                        
+                        let qualified_method = format!("{}::{}", class_name, method_with_params);
+                        log::info!("  Checking: {}", qualified_method);
+                        
+                        // 检查索引中是否存在这个方法
+                        if code_index.find_method(&qualified_method).is_some() {
+                            changed_methods.push(qualified_method.clone());
+                            log::info!("✅ Added field-related method to changed list: {}", qualified_method);
+                        } else {
+                            log::info!(
+                                "❌ Field-related method not found in index (may not exist): {}",
+                                qualified_method
+                            );
+                        }
+                    }
+                }
+            }
+            
             // 获取文件的完整路径
             let file_path = self.workspace_path.join(&file_change.file_path);
             

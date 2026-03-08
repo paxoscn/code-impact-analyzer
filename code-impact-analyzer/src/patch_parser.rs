@@ -47,6 +47,162 @@ pub struct FileChange {
 pub struct PatchParser;
 
 impl PatchParser {
+    /// 从 Java 字段名生成 getter 方法名
+    /// 例如：userName -> getUserName, isActive -> isActive
+    fn generate_getter_name(field_name: &str) -> String {
+        if field_name.starts_with("is") && field_name.len() > 2 {
+            // 对于 boolean 类型的 isXxx 字段，getter 通常保持原样
+            field_name.to_string()
+        } else {
+            // 首字母大写
+            let mut chars = field_name.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => format!("get{}{}", first.to_uppercase(), chars.as_str()),
+            }
+        }
+    }
+
+    /// 从 Java 字段名生成 setter 方法名
+    /// 例如：userName -> setUserName, isActive -> setActive
+    fn generate_setter_name(field_name: &str) -> String {
+        let field_name = if field_name.starts_with("is") && field_name.len() > 2 {
+            // 对于 isXxx 字段，移除 is 前缀
+            &field_name[2..]
+        } else {
+            field_name
+        };
+        
+        // 首字母大写
+        let mut chars = field_name.chars();
+        match chars.next() {
+            None => String::new(),
+            Some(first) => format!("set{}{}", first.to_uppercase(), chars.as_str()),
+        }
+    }
+
+    /// 检测 Java 字段声明
+    /// 返回 (字段类型, 字段名) 如果检测到字段声明
+    fn detect_java_field(line: &str) -> Option<(String, String)> {
+        let line = line.trim();
+        
+        // 跳过注释和空行
+        if line.is_empty() || line.starts_with("//") || line.starts_with("/*") || line.starts_with("*") {
+            return None;
+        }
+        
+        // 跳过方法声明（包含括号）
+        if line.contains('(') {
+            return None;
+        }
+        
+        // 跳过类声明、接口声明、注解等
+        if line.contains("class ") || line.contains("interface ") || line.contains("enum ") 
+            || line.starts_with('@') || line.starts_with("import ") || line.starts_with("package ") {
+            return None;
+        }
+        
+        // 简单的字段声明模式：[修饰符] 类型 字段名 [= 初始值];
+        // 例如：private String userName;
+        //      public static final int MAX_SIZE = 100;
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        
+        if parts.len() < 2 {
+            return None;
+        }
+        
+        // 查找类型和字段名
+        let mut type_idx = None;
+        let mut field_idx = None;
+        
+        for (i, part) in parts.iter().enumerate() {
+            // 跳过修饰符
+            if matches!(*part, "private" | "protected" | "public" | "static" | "final" | "transient" | "volatile") {
+                continue;
+            }
+            
+            // 第一个非修饰符的词是类型
+            if type_idx.is_none() {
+                type_idx = Some(i);
+                continue;
+            }
+            
+            // 第二个非修饰符的词是字段名
+            if field_idx.is_none() {
+                field_idx = Some(i);
+                break;
+            }
+        }
+        
+        if let (Some(type_idx), Some(field_idx)) = (type_idx, field_idx) {
+            let field_type = parts[type_idx].to_string();
+            let mut field_name = parts[field_idx].to_string();
+            
+            // 移除字段名后面的分号、等号等
+            if let Some(pos) = field_name.find(|c| c == ';' || c == '=' || c == ',') {
+                field_name = field_name[..pos].to_string();
+            }
+            
+            // 验证字段名是有效的标识符
+            if !field_name.is_empty() && field_name.chars().next().unwrap().is_alphabetic() {
+                return Some((field_type, field_name));
+            }
+        }
+        
+        None
+    }
+
+    /// 从文件变更中提取被修改的 Java 字段，并生成对应的 getter/setter 方法
+    /// 
+    /// # 参数
+    /// * `file_change` - 文件变更信息
+    /// 
+    /// # 返回
+    /// * 被修改字段对应的方法名列表（包括 getter 和 setter）
+    pub fn extract_modified_field_methods(
+        file_change: &FileChange,
+    ) -> Vec<String> {
+        // 只处理 Java 文件
+        if !file_change.file_path.ends_with(".java") {
+            return Vec::new();
+        }
+        
+        let mut methods = Vec::new();
+        
+        for hunk in &file_change.hunks {
+            for line in &hunk.lines {
+                // 只关注被添加或删除的行（修改的字段）
+                if !matches!(line.line_type, LineType::Added | LineType::Removed) {
+                    continue;
+                }
+                
+                // 检测是否是字段声明
+                if let Some((field_type, field_name)) = Self::detect_java_field(&line.content) {
+                    log::debug!(
+                        "Detected field modification in {}: {} {}",
+                        file_change.file_path,
+                        field_type,
+                        field_name
+                    );
+                    
+                    // 生成 getter 方法名
+                    let getter = Self::generate_getter_name(&field_name);
+                    methods.push(getter);
+                    
+                    // 生成 setter 方法名（带参数类型）
+                    let setter = format!("{}({})", Self::generate_setter_name(&field_name), field_type);
+                    methods.push(setter);
+                }
+            }
+        }
+        
+        // 去重
+        methods.sort();
+        methods.dedup();
+        
+        methods
+    }
+
     /// 解析 Git patch 文件
     /// 
     /// # 参数
@@ -530,4 +686,151 @@ Another line
         let cleaned = PatchParser::remove_trailing_content(content);
         assert_eq!(cleaned, format!("{}\n", content.trim_end()), "Should keep content unchanged");
     }
+
+    #[test]
+    fn test_generate_getter_name() {
+        assert_eq!(PatchParser::generate_getter_name("userName"), "getUserName");
+        assert_eq!(PatchParser::generate_getter_name("age"), "getAge");
+        assert_eq!(PatchParser::generate_getter_name("isActive"), "isActive");
+        assert_eq!(PatchParser::generate_getter_name("isValid"), "isValid");
+    }
+
+    #[test]
+    fn test_generate_setter_name() {
+        assert_eq!(PatchParser::generate_setter_name("userName"), "setUserName");
+        assert_eq!(PatchParser::generate_setter_name("age"), "setAge");
+        assert_eq!(PatchParser::generate_setter_name("isActive"), "setActive");
+        assert_eq!(PatchParser::generate_setter_name("isValid"), "setValid");
+    }
+
+    #[test]
+    fn test_detect_java_field() {
+        // 正常的字段声明
+        assert_eq!(
+            PatchParser::detect_java_field("    private String userName;"),
+            Some(("String".to_string(), "userName".to_string()))
+        );
+        
+        assert_eq!(
+            PatchParser::detect_java_field("public int age;"),
+            Some(("int".to_string(), "age".to_string()))
+        );
+        
+        assert_eq!(
+            PatchParser::detect_java_field("protected boolean isActive;"),
+            Some(("boolean".to_string(), "isActive".to_string()))
+        );
+        
+        // 带初始值的字段
+        assert_eq!(
+            PatchParser::detect_java_field("private String name = \"test\";"),
+            Some(("String".to_string(), "name".to_string()))
+        );
+        
+        // 静态常量
+        assert_eq!(
+            PatchParser::detect_java_field("public static final int MAX_SIZE = 100;"),
+            Some(("int".to_string(), "MAX_SIZE".to_string()))
+        );
+        
+        // 泛型类型
+        assert_eq!(
+            PatchParser::detect_java_field("private List<String> items;"),
+            Some(("List<String>".to_string(), "items".to_string()))
+        );
+        
+        // 不应该匹配的情况
+        assert_eq!(PatchParser::detect_java_field("public void doSomething() {"), None);
+        assert_eq!(PatchParser::detect_java_field("public class User {"), None);
+        assert_eq!(PatchParser::detect_java_field("@Override"), None);
+        assert_eq!(PatchParser::detect_java_field("// comment"), None);
+        assert_eq!(PatchParser::detect_java_field("import java.util.List;"), None);
+    }
+
+    #[test]
+    fn test_extract_modified_field_methods() {
+        let patch_content = r#"diff --git a/User.java b/User.java
+index 1234567..abcdefg 100644
+--- a/User.java
++++ b/User.java
+@@ -5,7 +5,7 @@ public class User {
+     private Long id;
+     
+-    private String userName;
++    private String username;
+     
+     private int age;
+"#;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(patch_content.as_bytes()).unwrap();
+        
+        let result = PatchParser::parse_patch_file(temp_file.path());
+        assert!(result.is_ok());
+        
+        let changes = result.unwrap();
+        assert_eq!(changes.len(), 1);
+        
+        let methods = PatchParser::extract_modified_field_methods(&changes[0]);
+        
+        // 应该生成 getter 和 setter 方法
+        assert!(methods.contains(&"getUserName".to_string()));
+        assert!(methods.contains(&"setUserName(String)".to_string()));
+        assert!(methods.contains(&"getUsername".to_string()));
+        assert!(methods.contains(&"setUsername(String)".to_string()));
+    }
+
+    #[test]
+    fn test_extract_modified_field_methods_boolean() {
+        let patch_content = r#"diff --git a/User.java b/User.java
+index 1234567..abcdefg 100644
+--- a/User.java
++++ b/User.java
+@@ -5,7 +5,7 @@ public class User {
+     private String name;
+     
+-    private boolean isActive;
++    private boolean isEnabled;
+"#;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(patch_content.as_bytes()).unwrap();
+        
+        let result = PatchParser::parse_patch_file(temp_file.path());
+        assert!(result.is_ok());
+        
+        let changes = result.unwrap();
+        let methods = PatchParser::extract_modified_field_methods(&changes[0]);
+        
+        // boolean 字段的 getter 保持 isXxx 格式，setter 是 setXxx
+        assert!(methods.contains(&"isActive".to_string()));
+        assert!(methods.contains(&"setActive(boolean)".to_string()));
+        assert!(methods.contains(&"isEnabled".to_string()));
+        assert!(methods.contains(&"setEnabled(boolean)".to_string()));
+    }
+
+    #[test]
+    fn test_extract_modified_field_methods_non_java() {
+        let patch_content = r#"diff --git a/test.txt b/test.txt
+index 1234567..abcdefg 100644
+--- a/test.txt
++++ b/test.txt
+@@ -1,2 +1,2 @@
+-private String userName;
++private String username;
+"#;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(patch_content.as_bytes()).unwrap();
+        
+        let result = PatchParser::parse_patch_file(temp_file.path());
+        assert!(result.is_ok());
+        
+        let changes = result.unwrap();
+        let methods = PatchParser::extract_modified_field_methods(&changes[0]);
+        
+        // 非 Java 文件不应该生成方法
+        assert_eq!(methods.len(), 0);
+    }
+
 }

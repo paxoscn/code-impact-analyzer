@@ -1835,6 +1835,7 @@ impl JavaParser {
             let mut scoped_identifiers = Vec::new();
             let mut argument_list_node = None;
             let mut has_method_invocation_object = false;
+            let mut field_access_object = None;
             
             for child in node.children(&mut cursor) {
                 if child.kind() == "identifier" {
@@ -1849,6 +1850,9 @@ impl JavaParser {
                 } else if child.kind() == "method_invocation" {
                     // 链式调用：obj.method1().method2()
                     has_method_invocation_object = true;
+                } else if child.kind() == "field_access" {
+                    // 字段访问作为对象：Foo.BAR.method()
+                    field_access_object = Some(child);
                 } else if child.kind() == "argument_list" {
                     argument_list_node = Some(child);
                 }
@@ -1884,6 +1888,36 @@ impl JavaParser {
                     line,
                 });
                 return;
+            }
+            
+            // 处理 field_access 作为对象的情况：Foo.BAR.method()
+            if let Some(field_access_node) = field_access_object {
+                if !identifiers.is_empty() {
+                    let method_name = &identifiers[identifiers.len() - 1];
+                    let field_access_text = &source[field_access_node.byte_range()];
+                    
+                    // 解析 field_access，如 "Foo.BAR"
+                    // 需要推断 Foo.BAR 的类型
+                    let object_type = self.infer_field_access_type(
+                        field_access_text,
+                        import_map,
+                        package_name,
+                    );
+                    
+                    if let Some(obj_type) = object_type {
+                        let target = if arg_types.is_empty() {
+                            format!("{}::{}()", obj_type, method_name)
+                        } else {
+                            format!("{}::{}({})", obj_type, method_name, arg_types.join(","))
+                        };
+                        
+                        calls.push(MethodCall {
+                            target,
+                            line,
+                        });
+                        return;
+                    }
+                }
             }
             
             // 对于 obj.method() 形式，有两个 identifier：对象名和方法名
@@ -2222,6 +2256,35 @@ impl JavaParser {
                 Some("Object".to_string())
             }
         }
+    }
+    
+    /// 推断字段访问的类型，如 Foo.BAR 的类型是 Foo
+    fn infer_field_access_type(
+        &self,
+        field_access_text: &str,
+        import_map: &std::collections::HashMap<String, String>,
+        package_name: &Option<String>,
+    ) -> Option<String> {
+        // 解析 field_access，如 "Foo.BAR"
+        // 对于枚举常量，Foo.BAR 的类型就是 Foo
+        if let Some(dot_pos) = field_access_text.rfind('.') {
+            let type_name = &field_access_text[..dot_pos];
+            let field_name = &field_access_text[dot_pos + 1..];
+            
+            // 检查字段名是否是全大写（枚举常量的常见命名）
+            // 或者首字母大写（也可能是枚举常量）
+            if field_name.chars().next().map_or(false, |c| c.is_uppercase()) {
+                // 尝试解析类型名为完整类名
+                let full_type = if is_primitive_or_common_type(type_name) {
+                    type_name.to_string()
+                } else {
+                    self.resolve_full_class_name(type_name, import_map, package_name)
+                };
+                return Some(full_type);
+            }
+        }
+        
+        None
     }
     
     /// 尝试推断方法调用的返回类型（使用返回类型映射）
@@ -2906,6 +2969,10 @@ impl JavaParser {
             if let Some(class_info) = self.extract_class_info_with_return_types(source, file_path, node, tree, method_return_types) {
                 classes.push(class_info);
             }
+        } else if node.kind() == "enum_declaration" {
+            if let Some(enum_info) = self.extract_enum_info_with_return_types(source, file_path, node, tree, method_return_types) {
+                classes.push(enum_info);
+            }
         }
         
         let mut cursor = node.walk();
@@ -2945,6 +3012,109 @@ impl JavaParser {
         })
     }
     
+    /// 提取枚举信息，同时收集方法返回类型
+    fn extract_enum_info_with_return_types(
+        &self,
+        source: &str,
+        file_path: &Path,
+        enum_node: tree_sitter::Node,
+        tree: &tree_sitter::Tree,
+        method_return_types: &mut MethodReturnTypeMap,
+    ) -> Option<ClassInfo> {
+        // 提取枚举名称
+        let enum_name = self.extract_class_name(source, &enum_node)?;
+        
+        // 获取包名
+        let package_name = self.extract_package_name(source, tree);
+        let full_name = if let Some(pkg) = package_name {
+            format!("{}.{}", pkg, enum_name)
+        } else {
+            enum_name.clone()
+        };
+        
+        // 提取枚举常量
+        let _enum_constants = self.extract_enum_constants(source, &enum_node);
+        
+        // 提取方法（从 enum_body -> enum_body_declarations）
+        let mut methods = Vec::new();
+        
+        // 首先找到 enum_body
+        if let Some(body_node) = enum_node.child_by_field_name("body") {
+            // 然后在 enum_body 中查找 enum_body_declarations
+            let mut cursor = body_node.walk();
+            for child in body_node.children(&mut cursor) {
+                if child.kind() == "enum_body_declarations" {
+                    // 直接使用 enum_body_declarations 节点提取方法
+                    methods = self.extract_methods_with_return_types(
+                        source,
+                        file_path,
+                        &child,
+                        &full_name,
+                        tree,
+                        method_return_types,
+                    );
+                    
+                    // 为字段生成 getter/setter
+                    self.generate_getters_for_fields(
+                        source,
+                        file_path,
+                        &child,
+                        &full_name,
+                        &mut methods,
+                        method_return_types,
+                        tree,
+                    );
+                    
+                    self.generate_setters_for_fields(
+                        source,
+                        file_path,
+                        &child,
+                        &full_name,
+                        &mut methods,
+                        tree,
+                    );
+                    break;
+                }
+            }
+        }
+        
+        Some(ClassInfo {
+            name: full_name,
+            methods,
+            line_range: (enum_node.start_position().row + 1, enum_node.end_position().row + 1),
+            is_interface: false,
+            implements: vec![],
+        })
+    }
+    
+    /// 提取枚举常量
+    fn extract_enum_constants(
+        &self,
+        source: &str,
+        enum_node: &tree_sitter::Node,
+    ) -> Vec<String> {
+        let mut constants = Vec::new();
+        
+        if let Some(body_node) = enum_node.child_by_field_name("body") {
+            let mut cursor = body_node.walk();
+            for child in body_node.children(&mut cursor) {
+                if child.kind() == "enum_constant" {
+                    // enum_constant 的第一个子节点通常是 identifier
+                    let mut const_cursor = child.walk();
+                    for const_child in child.children(&mut const_cursor) {
+                        if const_child.kind() == "identifier" {
+                            let name = &source[const_child.byte_range()];
+                            constants.push(name.to_string());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        
+        constants
+    }
+    
     /// 提取方法，同时收集返回类型
     fn extract_methods_with_return_types(
         &self,
@@ -2969,18 +3139,30 @@ impl JavaParser {
         // 加载应用配置
         let app_config = self.load_application_config(file_path);
         
-        // 查找类体或接口体
-        let mut cursor = class_node.walk();
-        for child in class_node.children(&mut cursor) {
-            if child.kind() == "class_body" || child.kind() == "interface_body" {
-                let mut body_cursor = child.walk();
-                for body_child in child.children(&mut body_cursor) {
-                    // 处理普通方法声明和接口方法声明
-                    if body_child.kind() == "method_declaration" {
-                        // 先收集返回类型
-                        if let Some(return_type) = self.extract_return_type(source, &body_child, tree) {
-                            // 获取方法名
-                            if let Some(method_name) = self.extract_method_name(source, &body_child) {
+        // 确定要处理的节点
+        // 如果传入的就是 enum_body_declarations，直接处理它
+        // 否则查找 class_body 或 interface_body
+        let nodes_to_process: Vec<tree_sitter::Node> = if class_node.kind() == "enum_body_declarations" {
+            vec![*class_node]
+        } else {
+            let mut cursor = class_node.walk();
+            class_node.children(&mut cursor)
+                .filter(|child| {
+                    child.kind() == "class_body" 
+                    || child.kind() == "interface_body"
+                })
+                .collect()
+        };
+        
+        for body_node in nodes_to_process {
+            let mut body_cursor = body_node.walk();
+            for body_child in body_node.children(&mut body_cursor) {
+                // 处理普通方法声明和接口方法声明
+                if body_child.kind() == "method_declaration" {
+                    // 先收集返回类型
+                    if let Some(return_type) = self.extract_return_type(source, &body_child, tree) {
+                        // 获取方法名
+                        if let Some(method_name) = self.extract_method_name(source, &body_child) {
                                 // 获取参数类型
                                 let param_types = self.extract_parameter_types(source, &body_child, tree);
                                 
@@ -3013,7 +3195,6 @@ impl JavaParser {
                         }
                     }
                 }
-            }
         }
         
         // 自动生成 getter 方法（如果字段存在但 getter 不存在）
@@ -3166,19 +3347,27 @@ impl JavaParser {
     ) -> Vec<(String, String)> {
         let mut fields = Vec::new();
         
-        // 查找类体
-        let mut cursor = class_node.walk();
-        for child in class_node.children(&mut cursor) {
-            if child.kind() == "class_body" {
-                let mut body_cursor = child.walk();
-                for body_child in child.children(&mut body_cursor) {
-                    // 查找字段声明
-                    if body_child.kind() == "field_declaration" {
-                        // 提取字段类型和名称
-                        if let Some((field_type, field_names)) = self.extract_field_declaration(source, &body_child) {
-                            for field_name in field_names {
-                                fields.push((field_name, field_type.clone()));
-                            }
+        // 确定要处理的节点
+        // 如果传入的就是 enum_body_declarations，直接处理它
+        // 否则查找 class_body
+        let nodes_to_process: Vec<tree_sitter::Node> = if class_node.kind() == "enum_body_declarations" {
+            vec![*class_node]
+        } else {
+            let mut cursor = class_node.walk();
+            class_node.children(&mut cursor)
+                .filter(|child| child.kind() == "class_body")
+                .collect()
+        };
+        
+        for body_node in nodes_to_process {
+            let mut body_cursor = body_node.walk();
+            for body_child in body_node.children(&mut body_cursor) {
+                // 查找字段声明
+                if body_child.kind() == "field_declaration" {
+                    // 提取字段类型和名称
+                    if let Some((field_type, field_names)) = self.extract_field_declaration(source, &body_child) {
+                        for field_name in field_names {
+                            fields.push((field_name, field_type.clone()));
                         }
                     }
                 }

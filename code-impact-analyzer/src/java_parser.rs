@@ -31,6 +31,35 @@ fn is_primitive_or_common_type(type_name: &str) -> bool {
     ) || type_name.contains("<") || type_name.contains("[")  // 泛型和数组保持原样
 }
 
+/// Java 自动装箱：将基本类型转换为对应的包装类型
+/// 
+/// # Arguments
+/// * `type_name` - 类型名称（可能是基本类型或包装类型）
+/// 
+/// # Returns
+/// 返回对应的包装类型，如果不是基本类型则返回原类型
+/// 
+/// # Examples
+/// ```
+/// assert_eq!(autobox_type("int"), "Integer");
+/// assert_eq!(autobox_type("Integer"), "Integer");
+/// assert_eq!(autobox_type("String"), "String");
+/// ```
+fn autobox_type(type_name: &str) -> String {
+    match type_name {
+        "int" => "Integer".to_string(),
+        "long" => "Long".to_string(),
+        "short" => "Short".to_string(),
+        "byte" => "Byte".to_string(),
+        "float" => "Float".to_string(),
+        "double" => "Double".to_string(),
+        "boolean" => "Boolean".to_string(),
+        "char" => "Character".to_string(),
+        "void" => "Void".to_string(),
+        _ => type_name.to_string(),
+    }
+}
+
 /// 移除类型中的泛型信息
 /// 例如：List<String> -> List, Map<K,V> -> Map
 fn remove_generics(type_name: &str) -> String {
@@ -2094,47 +2123,47 @@ impl JavaParser {
             // 字符串字面量
             "string_literal" => Some("String".to_string()),
             
-            // 整数字面量
+            // 整数字面量 - 自动装箱为 Integer/Long
             "decimal_integer_literal" | "hex_integer_literal" | "octal_integer_literal" | "binary_integer_literal" => {
                 // 检查是否有 L 后缀
                 if let Some(text) = source.get(arg_node.byte_range()) {
                     if text.ends_with('L') || text.ends_with('l') {
-                        Some("long".to_string())
+                        Some(autobox_type("long"))
                     } else {
-                        Some("int".to_string())
+                        Some(autobox_type("int"))
                     }
                 } else {
-                    Some("int".to_string())
+                    Some(autobox_type("int"))
                 }
             }
             
-            // 浮点数字面量
+            // 浮点数字面量 - 自动装箱为 Float/Double
             "decimal_floating_point_literal" | "hex_floating_point_literal" => {
                 if let Some(text) = source.get(arg_node.byte_range()) {
                     if text.ends_with('f') || text.ends_with('F') {
-                        Some("float".to_string())
+                        Some(autobox_type("float"))
                     } else {
-                        Some("double".to_string())
+                        Some(autobox_type("double"))
                     }
                 } else {
-                    Some("double".to_string())
+                    Some(autobox_type("double"))
                 }
             }
             
-            // 布尔字面量
-            "true" | "false" => Some("boolean".to_string()),
+            // 布尔字面量 - 自动装箱为 Boolean
+            "true" | "false" => Some(autobox_type("boolean")),
             
             // null 字面量
             "null_literal" => Some("Object".to_string()),
             
-            // 字符字面量
-            "character_literal" => Some("char".to_string()),
+            // 字符字面量 - 自动装箱为 Character
+            "character_literal" => Some(autobox_type("char")),
             
-            // 标识符（变量名）
+            // 标识符（变量名）- 对变量类型也进行自动装箱
             "identifier" => {
                 if let Some(var_name) = source.get(arg_node.byte_range()) {
-                    // 从 field_types 中查找变量类型
-                    field_types.get(var_name).cloned()
+                    // 从 field_types 中查找变量类型，并进行自动装箱
+                    field_types.get(var_name).map(|t| autobox_type(t))
                 } else {
                     None
                 }
@@ -2149,8 +2178,9 @@ impl JavaParser {
             
             // 方法调用：obj.method() 或 method()
             "method_invocation" => {
-                // 尝试推断方法返回类型（使用返回类型映射）
+                // 尝试推断方法返回类型（使用返回类型映射），并进行自动装箱
                 self.infer_method_return_type_with_map(source, arg_node, field_types, import_map, method_return_types, package_name)
+                    .map(|t| autobox_type(&t))
                     .or(Some("Object".to_string()))
             }
             
@@ -3624,7 +3654,7 @@ public class UserService {
         // 测试多参数方法
         let method2 = &class.methods[1];
         assert_eq!(method2.name, "updateUser");
-        assert_eq!(method2.full_qualified_name, "com.example.UserService::updateUser(String,int,boolean)");
+        assert_eq!(method2.full_qualified_name, "com.example.UserService::updateUser(String,Integer,boolean)");
         
         // 测试泛型参数方法（泛型被移除）
         let method3 = &class.methods[2];
@@ -3673,13 +3703,13 @@ public class UserController {
         assert_eq!(method.calls.len(), 3);
         
         // 第一个调用：字面量参数
-        assert_eq!(method.calls[0].target, "com.example.UserService::updateUser(String,int,boolean)");
+        assert_eq!(method.calls[0].target, "com.example.UserService::updateUser(String,Integer,boolean)");
         
         // 第二个调用：变量参数
-        assert_eq!(method.calls[1].target, "com.example.UserService::updateUser(String,int,boolean)");
+        assert_eq!(method.calls[1].target, "com.example.UserService::updateUser(String,Integer,boolean)");
         
         // 第三个调用：混合参数
-        assert_eq!(method.calls[2].target, "com.example.UserService::processData(String,int,String)");
+        assert_eq!(method.calls[2].target, "com.example.UserService::processData(String,Integer,String)");
     }
     
     #[test]
@@ -3713,7 +3743,7 @@ public class TestService {
         assert_eq!(method.calls.len(), 2);
         
         // 第一个调用：使用方法参数
-        assert_eq!(method.calls[0].target, "com.example.UserRepository::updateUser(String,int,boolean)");
+        assert_eq!(method.calls[0].target, "com.example.UserRepository::updateUser(String,Integer,boolean)");
         
         // 第二个调用：使用方法参数
         assert_eq!(method.calls[1].target, "com.example.UserRepository::findUser(String)");
@@ -4922,7 +4952,7 @@ public class TestService {
         
         assert_eq!(
             process_age.target,
-            "com.example.DataProcessor::processAge(int)",
+            "com.example.DataProcessor::processAge(Integer)",
             "Should infer int type from getAge() return type"
         );
     }

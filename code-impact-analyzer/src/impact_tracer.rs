@@ -321,6 +321,11 @@ impl ImpactGraph {
             println!("正在隐藏方法节点. 该步骤可能耗时过长, 可去掉--hide-methods参数来关闭该行为");
             result = result.hide_method_nodes_internal();
         }
+
+        // 第四步：如果需要再次合并相同边
+        if merge_edges {
+            result = result.merge_duplicate_edges_internal();
+        }
         
         result
     }
@@ -695,10 +700,6 @@ impl<'a> ImpactTracer<'a> {
             }
         }
         
-        if method.contains("sendCoupon") {
-            println!("method = {}, all_callers = {:?}", method, all_callers);
-        }
-        
         for caller in all_callers {
             // 解析接口调用：如果调用者调用的是接口方法，且接口只有一个实现类，
             // 则将调用目标替换为实现类的方法
@@ -727,6 +728,40 @@ impl<'a> ImpactTracer<'a> {
             
             // 递归追溯上游
             self.trace_method_upstream(&resolved_caller, depth + 1, visited, graph);
+            
+            // 递归追溯下游
+            // 查找当前方法调用的所有方法（下游）
+            let callees = self.index.find_callees(&resolved_caller);
+            
+            for callee in callees {
+                // 解析接口调用：如果被调用的是接口方法，且接口只有一个实现类，
+                // 则将调用目标替换为实现类的方法
+                let resolved_callee = self.index.resolve_interface_call(callee);
+                
+                // 检查被调用者是否在索引中（忽略外部库）
+                if self.index.find_method(&resolved_callee).is_none() {
+                    continue;
+                }
+                
+                // 添加被调用者节点
+                let callee_node = ImpactNode::method(resolved_callee.clone());
+                graph.add_node(callee_node);
+                
+                // 构建节点 ID
+                let method_id = format!("method:{}", resolved_caller);
+                let callee_id = format!("method:{}", resolved_callee);
+                
+                // 添加边：method -> callee
+                graph.add_edge(
+                    &method_id,
+                    &callee_id,
+                    EdgeType::MethodCall,
+                    Direction::Downstream,
+                );
+                
+                // 递归追溯下游
+                self.trace_method_downstream(&resolved_callee, depth + 1, visited, graph);
+            }
         }
         
         // 跨服务追溯（上游方向）

@@ -1,5 +1,4 @@
 use std::collections::{HashSet, HashMap};
-use std::ops::Index;
 use crate::code_index::CodeIndex;
 use crate::errors::TraceError;
 use crate::types::HttpMethod;
@@ -807,7 +806,7 @@ impl<'a> ImpactTracer<'a> {
             
             // 检查被调用者是否在索引中（忽略外部库）
             if self.index.find_method(&resolved_callee).is_none() {
-                if resolved_callee.contains("Mapper::") {
+                if resolved_callee.contains("Mapper::") && !resolved_callee.contains("ObjectMapper::") {
                     let mapper_class_name = &resolved_callee[0..(resolved_callee.find("Mapper").unwrap_or(resolved_callee.len()))];
                     let table_name = mapper_class_name[mapper_class_name.rfind(".").map(|i| i + 1).unwrap_or(0)..].to_string();
                     let table_node = ImpactNode::database_table(table_name.clone());

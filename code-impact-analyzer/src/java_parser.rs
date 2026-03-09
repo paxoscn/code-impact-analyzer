@@ -384,8 +384,11 @@ impl JavaParser {
         // 提取类级别的 RequestMapping 注解
         let class_request_mapping = self.extract_class_level_request_mapping(source, &class_node);
         
+        // 提取类级别的 KafkaListener 注解
+        let class_kafka_topic = self.extract_class_kafka_listener(source, &class_node);
+        
         // 提取类中的方法
-        let methods = self.extract_methods_from_class(source, file_path, &class_node, &full_class_name, tree, &feign_client_info, &class_request_mapping, app_config);
+        let methods = self.extract_methods_from_class(source, file_path, &class_node, &full_class_name, tree, &feign_client_info, &class_request_mapping, &class_kafka_topic, &implements, app_config);
         
         Some(ClassInfo {
             name: full_class_name,
@@ -415,6 +418,7 @@ impl JavaParser {
                         // 提取接口名称
                         let mut type_cursor = super_child.walk();
                         for type_child in super_child.children(&mut type_cursor) {
+                            // 处理简单类型标识符
                             if type_child.kind() == "type_identifier" {
                                 if let Some(interface_name) = source.get(type_child.byte_range()) {
                                     // 尝试将简单类名转换为完整类名
@@ -424,6 +428,24 @@ impl JavaParser {
                                         &package_name,
                                     );
                                     interfaces.push(full_interface_name);
+                                }
+                            }
+                            // 处理泛型类型（如 EventMessageDataConsumer<UserEvent>）
+                            else if type_child.kind() == "generic_type" {
+                                // 在 generic_type 中查找 type_identifier（基础接口名）
+                                let mut generic_cursor = type_child.walk();
+                                for generic_child in type_child.children(&mut generic_cursor) {
+                                    if generic_child.kind() == "type_identifier" {
+                                        if let Some(interface_name) = source.get(generic_child.byte_range()) {
+                                            let full_interface_name = self.resolve_full_class_name(
+                                                interface_name,
+                                                &import_map,
+                                                &package_name,
+                                            );
+                                            interfaces.push(full_interface_name);
+                                            break; // 只需要基础接口名，不需要泛型参数
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -741,6 +763,8 @@ impl JavaParser {
         tree: &tree_sitter::Tree,
         feign_client_info: &Option<FeignClientInfo>,
         class_request_mapping: &Option<String>,
+        class_kafka_topic: &Option<String>,
+        class_implements: &[String],
         app_config: &ApplicationConfig,
     ) -> Vec<MethodInfo> {
         let mut methods = Vec::new();
@@ -756,7 +780,7 @@ impl JavaParser {
                 for body_child in child.children(&mut body_cursor) {
                     // 处理普通方法声明和接口方法声明
                     if body_child.kind() == "method_declaration" {
-                        if let Some(method_info) = self.extract_method_info(source, file_path, body_child, class_name, simple_class_name, tree, feign_client_info, class_request_mapping, app_config) {
+                        if let Some(method_info) = self.extract_method_info(source, file_path, body_child, class_name, simple_class_name, tree, feign_client_info, class_request_mapping, class_kafka_topic, class_implements, app_config) {
                             methods.push(method_info);
                         }
                     }
@@ -778,6 +802,8 @@ impl JavaParser {
         tree: &tree_sitter::Tree,
         feign_client_info: &Option<FeignClientInfo>,
         class_request_mapping: &Option<String>,
+        class_kafka_topic: &Option<String>,
+        class_implements: &[String],
         app_config: &ApplicationConfig,
     ) -> Option<MethodInfo> {
         // 查找方法名
@@ -818,7 +844,37 @@ impl JavaParser {
         };
         
         // 提取 Kafka 操作
-        let kafka_operations = self.extract_kafka_operations(source, &method_node);
+        let mut kafka_operations = self.extract_kafka_operations(source, &method_node);
+        
+        // 如果方法级别没有 Kafka 注解，但类级别有，则使用类级别的
+        if kafka_operations.is_empty() {
+            if let Some(topic) = class_kafka_topic {
+                kafka_operations.push(KafkaOperation {
+                    operation_type: KafkaOpType::Consume,
+                    topic: topic.clone(),
+                    line: line_start,
+                });
+            }
+        }
+        
+        // 如果类实现了 EventMessageDataConsumer 接口，且方法名是 doConsumer，自动添加 Kafka 消费关系
+        // 注意：这里假设 topic 信息需要从其他地方获取（如配置文件或类名推断）
+        if kafka_operations.is_empty() && name == "doConsumer" {
+            for interface in class_implements {
+                if interface.contains("EventMessageDataConsumer") {
+                    // 从类名推断 topic（例如：UserEventConsumer -> user-events）
+                    // 这是一个简化的实现，实际项目中可能需要更复杂的逻辑
+                    if let Some(topic) = self.infer_kafka_topic_from_class_name(simple_class_name) {
+                        kafka_operations.push(KafkaOperation {
+                            operation_type: KafkaOpType::Consume,
+                            topic,
+                            line: line_start,
+                        });
+                    }
+                    break;
+                }
+            }
+        }
         
         // 提取返回类型（用于Mapper类的数据库操作判断）
         let return_type = self.extract_return_type(source, &method_node, tree);
@@ -2629,6 +2685,58 @@ impl JavaParser {
             .collect()
     }
     
+    /// 提取类级别的 Kafka 注解
+    fn extract_class_kafka_listener(&self, source: &str, class_node: &tree_sitter::Node) -> Option<String> {
+        let mut cursor = class_node.walk();
+        for child in class_node.children(&mut cursor) {
+            if child.kind() == "modifiers" {
+                if let Some(text) = source.get(child.byte_range()) {
+                    if text.contains("@KafkaListener") {
+                        let topic_pattern = Regex::new(r#"topics\s*=\s*"([^"]+)""#).unwrap();
+                        if let Some(cap) = topic_pattern.captures(text) {
+                            if let Some(topic) = cap.get(1) {
+                                return Some(topic.as_str().to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+    
+    /// 从类名推断 Kafka topic
+    /// 例如：UserEventConsumer -> user-events
+    ///      OrderEventConsumer -> order-events
+    fn infer_kafka_topic_from_class_name(&self, class_name: &str) -> Option<String> {
+        // 移除常见的后缀
+        let name = class_name
+            .trim_end_matches("Consumer")
+            .trim_end_matches("Listener")
+            .trim_end_matches("Handler");
+        
+        if name.is_empty() || name == class_name {
+            return None;
+        }
+        
+        // 将驼峰命名转换为短横线分隔
+        // 例如：UserEvent -> user-event
+        let mut result = String::new();
+        for (i, ch) in name.chars().enumerate() {
+            if i > 0 && ch.is_uppercase() {
+                result.push('-');
+            }
+            result.push(ch.to_lowercase().next().unwrap());
+        }
+        
+        // 添加 -s 后缀（复数形式）
+        if !result.ends_with('s') {
+            result.push('s');
+        }
+        
+        Some(result)
+    }
+    
     /// 提取 Kafka 操作
     fn extract_kafka_operations(&self, source: &str, method_node: &tree_sitter::Node) -> Vec<KafkaOperation> {
         let mut operations = Vec::new();
@@ -3198,6 +3306,12 @@ impl JavaParser {
         // 提取类级别的 @RequestMapping
         let class_request_mapping = self.extract_class_level_request_mapping(source, class_node);
         
+        // 提取类级别的 @KafkaListener
+        let class_kafka_topic = self.extract_class_kafka_listener(source, class_node);
+        
+        // 提取实现的接口列表
+        let class_implements = self.extract_implements_interfaces(source, class_node, tree);
+        
         // 加载应用配置
         let app_config = self.load_application_config(file_path);
         
@@ -3241,7 +3355,7 @@ impl JavaParser {
                         }
                         
                         // 然后提取完整的方法信息
-                        if let Some(method_info) = self.extract_method_info_with_return_types(
+                        if let Some(mut method_info) = self.extract_method_info_with_return_types(
                             source,
                             file_path,
                             body_child,
@@ -3253,6 +3367,33 @@ impl JavaParser {
                             &app_config,
                             method_return_types,
                         ) {
+                            // 后处理：添加类级别的 Kafka 注解
+                            if method_info.kafka_operations.is_empty() {
+                                if let Some(topic) = &class_kafka_topic {
+                                    method_info.kafka_operations.push(KafkaOperation {
+                                        operation_type: KafkaOpType::Consume,
+                                        topic: topic.clone(),
+                                        line: method_info.line_range.0,
+                                    });
+                                }
+                            }
+                            
+                            // 后处理：为 EventMessageDataConsumer 的 doConsumer 方法添加 Kafka 消费关系
+                            if method_info.kafka_operations.is_empty() && method_info.name == "doConsumer" {
+                                for interface in &class_implements {
+                                    if interface.contains("EventMessageDataConsumer") {
+                                        if let Some(topic) = self.infer_kafka_topic_from_class_name(simple_class_name) {
+                                            method_info.kafka_operations.push(KafkaOperation {
+                                                operation_type: KafkaOpType::Consume,
+                                                topic,
+                                                line: method_info.line_range.0,
+                                            });
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                            
                             methods.push(method_info);
                         }
                     }

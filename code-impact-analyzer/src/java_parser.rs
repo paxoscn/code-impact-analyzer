@@ -2245,8 +2245,11 @@ impl JavaParser {
             // 标识符（变量名）- 对变量类型也进行自动装箱
             "identifier" => {
                 if let Some(var_name) = source.get(arg_node.byte_range()) {
-                    // 从 field_types 中查找变量类型，并进行自动装箱
-                    field_types.get(var_name).map(|t| autobox_type(t))
+                    // 从 field_types 中查找变量类型，去除泛型，并进行自动装箱
+                    field_types.get(var_name).map(|t| {
+                        let type_without_generics = remove_generics(t);
+                        autobox_type(&type_without_generics)
+                    })
                 } else {
                     None
                 }

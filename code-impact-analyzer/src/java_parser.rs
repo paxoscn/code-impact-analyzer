@@ -642,10 +642,10 @@ impl JavaParser {
         
         for child in root_node.children(&mut cursor) {
             if child.kind() == "package_declaration" {
-                // 在 package_declaration 中查找 scoped_identifier
+                // 在 package_declaration 中查找 scoped_identifier 或 identifier
                 let mut pkg_cursor = child.walk();
                 for pkg_child in child.children(&mut pkg_cursor) {
-                    if pkg_child.kind() == "scoped_identifier" {
+                    if pkg_child.kind() == "scoped_identifier" || pkg_child.kind() == "identifier" {
                         if let Some(text) = source.get(pkg_child.byte_range()) {
                             return Some(text.to_string());
                         }
@@ -1046,8 +1046,8 @@ impl JavaParser {
     fn extract_parameter_types(&self, source: &str, method_node: &tree_sitter::Node, tree: &tree_sitter::Tree) -> Vec<String> {
         let mut param_types = Vec::new();
         
-        // 获取导入映射和包名
-        let import_map = self.build_import_map(source, tree);
+        // 获取导入映射（包括通配符导入）和包名
+        let (import_map, wildcard_imports) = self.build_import_map_with_wildcards(source, tree);
         let package_name = self.extract_package_name(source, tree);
         
         let mut cursor = method_node.walk();
@@ -1062,12 +1062,12 @@ impl JavaParser {
                     if param_child.kind() == "formal_parameter" {
                         // 提取参数类型
                         if let Some(param_type) = self.extract_parameter_type(source, &param_child) {
-                            // 解析为完整类名
+                            // 解析为完整类名（支持通配符导入）
                             let full_type = if is_primitive_or_common_type(&param_type) {
                                 // 对基本类型进行自动装箱
                                 autobox_type(&param_type)
                             } else {
-                                self.resolve_full_class_name(&param_type, &import_map, &package_name)
+                                self.resolve_full_class_name_with_wildcard_fallback(&param_type, &import_map, &wildcard_imports, &package_name)
                             };
                             param_types.push(full_type);
                         }
@@ -1232,6 +1232,11 @@ impl JavaParser {
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
                     if child.kind() == "scoped_identifier" {
+                        if let Some(package_path) = source.get(child.byte_range()) {
+                            wildcard_imports.push(package_path.to_string());
+                        }
+                    } else if child.kind() == "identifier" {
+                        // 处理单级包名的通配符导入，如 import foo.*;
                         if let Some(package_path) = source.get(child.byte_range()) {
                             wildcard_imports.push(package_path.to_string());
                         }

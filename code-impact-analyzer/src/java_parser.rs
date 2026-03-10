@@ -2442,6 +2442,14 @@ impl JavaParser {
                 Some("Object".to_string())
             }
             
+            // Lambda 表达式：x -> x.toString() 或 (x, y) -> x + y
+            "lambda_expression" => {
+                // Lambda 表达式通常表示函数式接口
+                // 最常见的是 java.util.function.Function, Consumer, Predicate 等
+                // 为了简化，我们统一返回 java.util.function.Function
+                Some("java.util.function.Function".to_string())
+            }
+            
             // 其他表达式
             _ => {
                 // 默认返回 Object

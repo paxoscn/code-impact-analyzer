@@ -70,6 +70,16 @@ fn remove_generics(type_name: &str) -> String {
     }
 }
 
+/// 将字符串首字母大写
+/// 例如：bar -> Bar, foo -> Foo
+fn capitalize_first_letter(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+    }
+}
+
 
 /// FeignClient 注解信息
 #[derive(Debug, Clone)]
@@ -2317,10 +2327,31 @@ impl JavaParser {
             "identifier" => {
                 if let Some(var_name) = source.get(arg_node.byte_range()) {
                     // 从 field_types 中查找变量类型，去除泛型，并进行自动装箱
-                    field_types.get(var_name).map(|t| {
+                    if let Some(t) = field_types.get(var_name) {
                         let type_without_generics = remove_generics(t);
-                        autobox_type(&type_without_generics)
-                    })
+                        Some(autobox_type(&type_without_generics))
+                    } else {
+                        // 如果找不到变量类型，尝试将首字母大写后作为类名查找
+                        let capitalized = capitalize_first_letter(var_name);
+                        if capitalized != var_name {
+                            // 尝试解析为完整类名
+                            let full_type = self.resolve_full_class_name(&capitalized, import_map, package_name);
+                            // 如果在import_map中找到，或者解析后的类名包含包名，说明是有效的类型
+                            if import_map.contains_key(&capitalized) {
+                                Some(full_type)
+                            } else if package_name.is_some() && full_type.contains('.') {
+                                // 假设在同一个包中存在这个类
+                                Some(full_type)
+                            } else {
+                                // 如果不在import中，也不在同一个包中，返回Object
+                                Some("Object".to_string())
+                            }
+                        } else {
+                            // 首字母已经是大写，可能是类名，但找不到对应的变量
+                            // 返回Object
+                            Some("Object".to_string())
+                        }
+                    }
                 } else {
                     None
                 }
@@ -5324,4 +5355,78 @@ public class User {
             1,
             "Should have exactly one setName method"
         );
+    }
+
+    #[test]
+    fn test_lambda_parameter_capitalize_type_inference() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+package foo;
+
+import foo.Bar;
+
+class Tac {
+    void tic() {
+        toe(bar -> go(bar));
+    }
+    
+    void toe(java.util.function.Function<Bar, Void> func) {
+        // 接受一个 Function<Bar, Void> 参数
+    }
+    
+    Void go(Bar b) {
+        return null;
+    }
+}
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("Tac.java")).unwrap();
+        
+        assert_eq!(result.classes.len(), 1);
+        let class = &result.classes[0];
+        assert_eq!(class.name, "foo.Tac");
+        
+        let tic_method = class.methods.iter()
+            .find(|m| m.name == "tic")
+            .expect("Should find tic method");
+        
+        assert_eq!(tic_method.calls.len(), 2);
+        
+        // 第一个调用：toe(bar -> go(bar))
+        assert_eq!(tic_method.calls[0].target, "foo.Tac::toe(java.util.function.Function)");
+        
+        // 第二个调用：go(bar) - bar 应该被推断为 Bar 类型
+        assert_eq!(tic_method.calls[1].target, "foo.Tac::go(foo.Bar)");
+    }
+    
+    #[test]
+    fn test_lambda_parameter_capitalize_same_package() {
+        let parser = JavaParser::new().unwrap();
+        let source = r#"
+package foo;
+
+class Tac {
+    void tic() {
+        toe(bar -> go(bar));
+    }
+    
+    void toe(java.util.function.Function<Bar, Void> func) {}
+    Void go(Bar b) { return null; }
+}
+
+class Bar {}
+        "#;
+        
+        let result = parser.parse_file(source, Path::new("Tac.java")).unwrap();
+        
+        let tac_class = result.classes.iter()
+            .find(|c| c.name == "foo.Tac")
+            .expect("Should find Tac class");
+        
+        let tic_method = tac_class.methods.iter()
+            .find(|m| m.name == "tic")
+            .expect("Should find tic method");
+        
+        // bar 应该被推断为 foo.Bar（同包中的类）
+        assert_eq!(tic_method.calls[1].target, "foo.Tac::go(foo.Bar)");
     }

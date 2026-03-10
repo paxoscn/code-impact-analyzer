@@ -242,6 +242,10 @@ impl CodeIndex {
         log::info!("传播继承的成员...");
         self.propagate_inherited_members();
         
+        // ===== 传播多态调用 =====
+        log::info!("传播多态调用...");
+        self.propagate_polymorphic_calls();
+        
         log::info!("两遍索引完成：");
         log::info!("  - 方法总数: {}", self.methods.len());
         log::info!("  - 方法调用关系: {}", self.method_calls.len());
@@ -330,6 +334,10 @@ impl CodeIndex {
         // 传播继承的成员
         log::info!("传播继承的成员...");
         self.propagate_inherited_members();
+        
+        // 传播多态调用
+        log::info!("传播多态调用...");
+        self.propagate_polymorphic_calls();
         
         log::info!("索引构建完成：");
         log::info!("  - 方法总数: {}", self.methods.len());
@@ -497,6 +505,14 @@ impl CodeIndex {
         }
         
         index_pb.finish_with_message("索引构建完成");
+        
+        // ===== 传播继承的成员 =====
+        log::info!("传播继承的成员...");
+        self.propagate_inherited_members();
+        
+        // ===== 传播多态调用 =====
+        log::info!("传播多态调用...");
+        self.propagate_polymorphic_calls();
         
         log::info!("项目两遍索引完成: {}", project_path.display());
         log::info!("  - 方法总数: {}", self.methods.len());
@@ -1335,6 +1351,100 @@ impl CodeIndex {
             }
         }
     }
+    /// 传播多态调用
+    ///
+    /// 当类 X 调用了 foo(A)，且 A 继承自 B 时，为类 X 增加一个对 foo(B) 的调用
+    /// 这样可以正确追踪多态性带来的影响
+    pub fn propagate_polymorphic_calls(&mut self) {
+        // 收集所有需要添加的多态调用
+        let mut polymorphic_calls = Vec::new();
+
+        // 遍历所有方法调用
+        for (caller_method, callees) in &self.method_calls {
+            for callee_method in callees {
+                // 解析被调用方法的签名：ClassName::methodName(ParamType1,ParamType2,...)
+                if let Some(polymorphic_callee) = self.find_polymorphic_variant(callee_method) {
+                    polymorphic_calls.push((caller_method.clone(), polymorphic_callee));
+                }
+            }
+        }
+
+        // 应用多态调用
+        for (caller_method, polymorphic_callee) in polymorphic_calls {
+            // 添加到方法调用映射
+            self.method_calls
+                .entry(caller_method.clone())
+                .or_insert_with(Vec::new)
+                .push(polymorphic_callee.clone());
+            println!("polymorphic_callee {} {}", caller_method, polymorphic_callee);
+
+            // 添加到反向调用映射
+            self.reverse_calls
+                .entry(polymorphic_callee)
+                .or_insert_with(Vec::new)
+                .push(caller_method);
+        }
+    }
+
+    /// 查找方法的多态变体
+    ///
+    /// TODO 返回笛卡尔积
+    /// 对于方法 ClassName::methodName(ParamType1,ParamType2,...)
+    /// 如果 ParamType1 继承自 BaseType1，则返回 ClassName::methodName(BaseType1,ParamType2,...)
+    fn find_polymorphic_variant(&self, method_signature: &str) -> Option<String> {
+        // 解析方法签名
+        let parts: Vec<&str> = method_signature.split("::").collect();
+        if parts.len() != 2 {
+            return None;
+        }
+
+        let class_name = parts[0];
+        let method_part = parts[1];
+
+        // 解析方法名和参数
+        if let Some(paren_pos) = method_part.find('(') {
+            let method_name = &method_part[..paren_pos];
+            let params_str = &method_part[paren_pos + 1..];
+
+            // 移除结尾的 ')'
+            let params_str = params_str.trim_end_matches(')');
+
+            if params_str.is_empty() {
+                // 无参数方法，没有多态变体
+                return None;
+            }
+
+            // 分割参数类型
+            let param_types: Vec<&str> = params_str.split(',').collect();
+
+            // 检查每个参数类型是否有父类
+            for (i, param_type) in param_types.iter().enumerate() {
+                if let Some(parent_type) = self.class_inheritance.get(*param_type) {
+                    // 找到了一个有父类的参数类型，创建多态变体
+                    let mut new_param_types = param_types.clone();
+                    new_param_types[i] = parent_type;
+
+                    let new_signature = format!(
+                        "{}::{}({})",
+                        class_name,
+                        method_name,
+                        new_param_types.join(",")
+                    );
+
+                    // 检查这个多态变体是否存在
+                    if self.methods.contains_key(&new_signature) {
+                        if method_name.contains("setRequiredCoupon") {
+                            println!("new_signature111 {}", new_signature);
+                        }
+                        return Some(new_signature);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
 
     /// 递归收集类的所有祖先方法
     fn collect_all_ancestor_methods(&self, class_name: &str, result: &mut Vec<String>) {

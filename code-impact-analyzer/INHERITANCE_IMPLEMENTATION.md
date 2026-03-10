@@ -2,7 +2,9 @@
 
 ## 概述
 
-实现了对 Java 类继承（extends）的完整支持，确保当类 A 继承类 B 时，A 的索引包含 B 的所有接口、属性和方法。
+实现了对 Java 类继承（extends）的完整支持，包括：
+1. 当类 A 继承类 B 时，A 的索引包含 B 的所有接口和方法
+2. 当类 X 调用了 `foo(A)` 且 A 继承自 B 时，为类 X 增加一个对 `foo(B)` 的调用（多态调用传播）
 
 ## 实现的功能
 
@@ -74,8 +76,24 @@ fn extract_extends_class(
 2. 索引所有类和方法
 3. 记录继承关系
 4. 调用 `propagate_inherited_members()` 传播继承的成员
+5. 调用 `propagate_polymorphic_calls()` 传播多态调用
 
-### 5. 序列化支持
+### 5. 多态调用传播
+
+#### propagate_polymorphic_calls 方法
+实现了多态调用的自动传播：
+- 遍历所有方法调用
+- 对于每个调用 `foo(A)`，检查参数类型 A 是否有父类 B
+- 如果存在方法 `foo(B)`，则添加对 `foo(B)` 的调用
+- 支持多参数方法的多态传播
+
+特性：
+- 自动识别方法重载
+- 支持多参数方法（任意参数位置的多态）
+- 只在目标方法存在时才添加多态调用
+- 同时更新正向和反向调用关系
+
+### 6. 序列化支持
 
 更新了 `src/index_storage.rs` 中的序列化结构：
 ```rust
@@ -93,8 +111,8 @@ pub struct SerializableIndex {
 ## 测试覆盖
 
 ### 单元测试
-在 `tests/inheritance_test.rs` 中添加了完整的测试套件：
 
+#### 继承测试 (tests/inheritance_test.rs)
 1. **test_class_inheritance_tracking**
    - 测试基本的继承关系跟踪
    - 验证父类方法被正确传播到子类
@@ -106,6 +124,19 @@ pub struct SerializableIndex {
 3. **test_multi_level_inheritance**
    - 测试多层继承（祖父类 -> 父类 -> 子类）
    - 验证所有祖先的接口和方法都被正确传播
+
+#### 多态调用测试 (tests/polymorphic_call_test.rs)
+1. **test_polymorphic_call_propagation**
+   - 测试基本的多态调用传播
+   - 验证调用 `foo(Dog)` 时自动添加对 `foo(Animal)` 的调用
+
+2. **test_polymorphic_call_with_multiple_params**
+   - 测试多参数方法的多态传播
+   - 验证 `process(String, Cat)` 自动添加 `process(String, Animal)` 调用
+
+3. **test_no_polymorphic_call_without_parent**
+   - 测试没有继承关系时不添加多态调用
+   - 验证边界情况处理
 
 ### Java 解析测试
 在 `tests/java_inheritance_parsing_test.rs` 中添加了解析测试：
@@ -145,7 +176,47 @@ public class Child extends Parent {
 - `com.example.Child::childMethod()` - 自己的方法
 - `com.example.Child::parentMethod()` - 继承自父类的方法
 
-### 场景 2：接口继承
+### 场景 2：多态调用传播
+```java
+// Animal.java
+public class Animal {
+    public void eat() { }
+}
+
+// Dog.java
+public class Dog extends Animal {
+    public void bark() { }
+}
+
+// Service.java
+public class Service {
+    public void process(Animal animal) {
+        // 处理动物
+    }
+    
+    public void process(Dog dog) {
+        // 处理狗
+    }
+}
+
+// Controller.java
+public class Controller {
+    private Service service;
+    
+    public void handle() {
+        Dog dog = new Dog();
+        service.process(dog);  // 调用 process(Dog)
+    }
+}
+```
+
+索引后，`Controller::handle` 的调用关系将包含：
+- `Service::process(Dog)` - 直接调用
+- `Service::process(Animal)` - 多态调用（自动添加）
+
+这样，当修改 `Service::process(Animal)` 时，影响分析会正确识别到 `Controller::handle` 也会受影响。
+
+### 场景 3：接口继承
 ```java
 // MyInterface.java
 public interface MyInterface {
@@ -226,3 +297,68 @@ impl CodeIndex {
 2. 支持内部类的继承关系
 3. 优化多层继承的性能
 4. 添加继承关系的可视化输出
+
+
+## 多态调用传播的优势
+
+### 1. 更准确的影响分析
+当修改父类参数的方法时，能够正确识别所有可能受影响的调用者，包括那些传递子类实例的调用。
+
+### 2. 支持方法重载
+自动处理 Java 的方法重载机制，识别参数类型的继承关系。
+
+### 3. 完整的调用链追踪
+结合继承成员传播和多态调用传播，可以完整追踪整个调用链，包括：
+- 直接调用
+- 通过继承的间接调用
+- 通过多态的潜在调用
+
+## 实现细节
+
+### 方法签名解析
+方法签名格式：`ClassName::methodName(ParamType1,ParamType2,...)`
+
+例如：
+- `Service::process(Dog)` - 单参数
+- `Service::process(String,Cat)` - 多参数
+- `Service::process()` - 无参数
+
+### 多态变体查找算法
+1. 解析方法签名，提取类名、方法名和参数类型列表
+2. 遍历每个参数类型
+3. 查找参数类型的父类
+4. 构造新的方法签名（替换参数类型为父类）
+5. 检查新方法签名是否存在于索引中
+6. 如果存在，添加多态调用关系
+
+### 性能优化
+- 只在索引完成后执行一次传播
+- 使用 HashMap 快速查找继承关系
+- 避免重复添加相同的调用关系
+
+## API 更新
+
+### 新增公共方法
+
+```rust
+impl CodeIndex {
+    /// 传播多态调用
+    /// 当类 X 调用了 foo(A)，且 A 继承自 B 时，为类 X 增加一个对 foo(B) 的调用
+    pub fn propagate_polymorphic_calls(&mut self)
+}
+```
+
+## 限制和注意事项
+
+1. **只支持单层多态传播**：当前实现只会为直接父类创建多态调用，不会递归到祖父类
+2. **需要方法存在**：只有当父类参数的方法确实存在时，才会添加多态调用
+3. **参数顺序敏感**：多参数方法中，每个参数位置都会独立检查多态性
+4. **不支持泛型擦除**：泛型参数会被当作普通类型处理
+
+## 未来改进
+
+1. 支持递归多态传播（传播到所有祖先类）
+2. 支持接口类型的多态传播
+3. 优化多参数方法的组合多态（同时替换多个参数）
+4. 添加多态调用的可视化标记
+5. 支持泛型类型的多态分析

@@ -233,9 +233,9 @@ fn test_interface_mappings_persistence() {
         name: "com.example.ServiceImpl1".to_string(),
         line_range: (1, 20),
         methods: vec![],
-        return_type: None,
         is_interface: false,
         implements: vec!["com.example.Service".to_string()],
+        extends: None,
     };
     
     let impl_class2 = ClassInfo {
@@ -244,6 +244,7 @@ fn test_interface_mappings_persistence() {
         methods: vec![],
         is_interface: false,
         implements: vec!["com.example.Service".to_string()],
+        extends: None,
     };
     
     // 索引这些类

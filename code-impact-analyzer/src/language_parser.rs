@@ -37,6 +37,8 @@ pub struct ClassInfo {
     pub is_interface: bool,
     /// 实现的接口列表（完整类名）
     pub implements: Vec<String>,
+    /// 继承的父类（完整类名）
+    pub extends: Option<String>,
 }
 
 /// 方法信息

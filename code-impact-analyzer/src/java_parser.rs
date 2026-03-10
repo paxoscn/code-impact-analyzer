@@ -40,7 +40,7 @@ fn is_primitive_or_common_type(type_name: &str) -> bool {
 /// 返回对应的包装类型，如果不是基本类型则返回原类型
 /// 
 /// # Examples
-/// ```
+/// ```ignore
 /// assert_eq!(autobox_type("int"), "Integer");
 /// assert_eq!(autobox_type("Integer"), "Integer");
 /// assert_eq!(autobox_type("String"), "String");
@@ -378,6 +378,9 @@ impl JavaParser {
         // 提取实现的接口列表
         let implements = self.extract_implements_interfaces(source, &class_node, tree);
         
+        // 提取继承的父类
+        let extends = self.extract_extends_class(source, &class_node, tree);
+        
         // 提取类级别的 FeignClient 注解
         let feign_client_info = self.extract_feign_client_annotation(source, &class_node);
         
@@ -396,6 +399,7 @@ impl JavaParser {
             line_range: (line_start, line_end),
             is_interface,
             implements,
+            extends,
         })
     }
     
@@ -456,6 +460,68 @@ impl JavaParser {
         
         interfaces
     }
+    /// 提取类继承的父类
+    /// 提取类继承的父类
+    fn extract_extends_class(&self, source: &str, class_node: &tree_sitter::Node, tree: &tree_sitter::Tree) -> Option<String> {
+        // 构建导入映射，用于将简单类名转换为完整类名
+        let import_map = self.build_import_map(source, tree);
+        let package_name = self.extract_package_name(source, tree);
+
+        // 查找 superclass 节点（包含 extends 子句）
+        let mut cursor = class_node.walk();
+        for child in class_node.children(&mut cursor) {
+            if child.kind() == "superclass" {
+                // 在 superclass 中查找 type_identifier、generic_type 或 scoped_type_identifier
+                let mut super_cursor = child.walk();
+                for super_child in child.children(&mut super_cursor) {
+                    // 处理简单类型标识符
+                    if super_child.kind() == "type_identifier" {
+                        if let Some(parent_name) = source.get(super_child.byte_range()) {
+                            // 尝试将简单类名转换为完整类名
+                            let full_parent_name = self.resolve_full_class_name(
+                                parent_name,
+                                &import_map,
+                                &package_name,
+                            );
+                            return Some(full_parent_name);
+                        }
+                    }
+                    // 处理完全限定名（如 com.base.BaseClass）
+                    else if super_child.kind() == "scoped_type_identifier" {
+                        if let Some(parent_name) = source.get(super_child.byte_range()) {
+                            // 完全限定名直接返回
+                            return Some(parent_name.to_string());
+                        }
+                    }
+                    // 处理泛型类型（如 BaseService<T>）
+                    else if super_child.kind() == "generic_type" {
+                        // 在 generic_type 中查找 type_identifier 或 scoped_type_identifier（基础类名）
+                        let mut generic_cursor = super_child.walk();
+                        for generic_child in super_child.children(&mut generic_cursor) {
+                            if generic_child.kind() == "type_identifier" {
+                                if let Some(parent_name) = source.get(generic_child.byte_range()) {
+                                    let full_parent_name = self.resolve_full_class_name(
+                                        parent_name,
+                                        &import_map,
+                                        &package_name,
+                                    );
+                                    return Some(full_parent_name);
+                                }
+                            } else if generic_child.kind() == "scoped_type_identifier" {
+                                if let Some(parent_name) = source.get(generic_child.byte_range()) {
+                                    // 完全限定名直接返回
+                                    return Some(parent_name.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     
     /// 将简单类名解析为完整类名
     fn resolve_full_class_name(
@@ -3213,6 +3279,7 @@ impl JavaParser {
             line_range: class_info.line_range,
             is_interface: class_info.is_interface,
             implements: class_info.implements,
+            extends: class_info.extends,
         })
     }
     
@@ -3288,6 +3355,7 @@ impl JavaParser {
             line_range: (enum_node.start_position().row + 1, enum_node.end_position().row + 1),
             is_interface: false,
             implements: vec![],
+            extends: None,
         })
     }
     

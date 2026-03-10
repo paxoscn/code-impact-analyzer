@@ -55,6 +55,12 @@ pub struct CodeIndex {
     
     /// 实现类到接口的映射: implementation_class_name -> [interface_names]
     class_interfaces: FxHashMap<String, Vec<String>>,
+    
+    /// 子类到父类的映射: child_class_name -> parent_class_name
+    class_inheritance: FxHashMap<String, String>,
+    
+    /// 父类到子类的映射: parent_class_name -> [child_class_names]
+    parent_children: FxHashMap<String, Vec<String>>,
 }
 
 impl CodeIndex {
@@ -75,6 +81,8 @@ impl CodeIndex {
             config_associations: FxHashMap::default(),
             interface_implementations: FxHashMap::default(),
             class_interfaces: FxHashMap::default(),
+            class_inheritance: FxHashMap::default(),
+            parent_children: FxHashMap::default(),
         }
     }
     
@@ -230,6 +238,10 @@ impl CodeIndex {
         
         index_pb.finish_with_message("索引构建完成");
         
+        // ===== 传播继承的成员 =====
+        log::info!("传播继承的成员...");
+        self.propagate_inherited_members();
+        
         log::info!("两遍索引完成：");
         log::info!("  - 方法总数: {}", self.methods.len());
         log::info!("  - 方法调用关系: {}", self.method_calls.len());
@@ -238,6 +250,7 @@ impl CodeIndex {
         log::info!("  - Kafka 生产者: {}", self.kafka_producers.len());
         log::info!("  - Kafka 消费者: {}", self.kafka_consumers.len());
         log::info!("  - 接口实现关系: {}", self.interface_implementations.len());
+        log::info!("  - 继承关系: {}", self.class_inheritance.len());
         
         Ok(())
     }
@@ -314,6 +327,10 @@ impl CodeIndex {
         
         index_pb.finish_with_message("索引构建完成");
         
+        // 传播继承的成员
+        log::info!("传播继承的成员...");
+        self.propagate_inherited_members();
+        
         log::info!("索引构建完成：");
         log::info!("  - 方法总数: {}", self.methods.len());
         log::info!("  - 方法调用关系: {}", self.method_calls.len());
@@ -322,6 +339,7 @@ impl CodeIndex {
         log::info!("  - Kafka 生产者: {}", self.kafka_producers.len());
         log::info!("  - Kafka 消费者: {}", self.kafka_consumers.len());
         log::info!("  - 接口实现关系: {}", self.interface_implementations.len());
+        log::info!("  - 继承关系: {}", self.class_inheritance.len());
         
         Ok(())
     }
@@ -692,6 +710,18 @@ impl CodeIndex {
                         .or_insert_with(Vec::new)
                         .push(interface_name.clone());
                 }
+            }
+            
+            // 索引继承关系
+            if let Some(parent_class) = &class.extends {
+                // 子类 -> 父类映射
+                self.class_inheritance.insert(class.name.clone(), parent_class.clone());
+                
+                // 父类 -> 子类映射
+                self.parent_children
+                    .entry(parent_class.clone())
+                    .or_insert_with(Vec::new)
+                    .push(class.name.clone());
             }
             
             for method in &class.methods {
@@ -1237,6 +1267,130 @@ impl CodeIndex {
             .map(|interfaces| interfaces.iter().map(|s| s.as_str()).collect())
             .unwrap_or_default()
     }
+    /// 传播父类的成员到子类
+    ///
+    /// 当类A继承类B时，A应该能够访问B的所有方法和接口
+    /// 这个方法在所有文件索引完成后调用，确保继承链中的所有成员都被正确传播
+    /// 传播父类的成员到子类
+    /// 
+    /// 当类A继承类B时，A应该能够访问B的所有方法和接口
+    /// 这个方法在所有文件索引完成后调用，确保继承链中的所有成员都被正确传播
+    pub fn propagate_inherited_members(&mut self) {
+        // 收集所有需要传播的信息
+        let mut propagations = Vec::new();
+
+        for (child_class, _) in &self.class_inheritance {
+            // 收集所有祖先类的接口（递归）
+            let mut ancestor_interfaces = Vec::new();
+            self.collect_all_interfaces(child_class, &mut ancestor_interfaces);
+
+            // 收集所有祖先类的方法（递归）
+            let mut ancestor_methods = Vec::new();
+            self.collect_all_ancestor_methods(child_class, &mut ancestor_methods);
+
+            propagations.push((child_class.clone(), ancestor_interfaces, ancestor_methods));
+        }
+
+        // 应用传播
+        for (child_class, ancestor_interfaces, ancestor_methods) in propagations {
+            // 传播接口
+            for interface in ancestor_interfaces {
+                // 添加到子类的接口列表（避免重复）
+                let class_interfaces = self.class_interfaces
+                    .entry(child_class.clone())
+                    .or_insert_with(Vec::new);
+                if !class_interfaces.contains(&interface) {
+                    class_interfaces.push(interface.clone());
+                }
+
+                // 添加到接口的实现类列表（避免重复）
+                let interface_impls = self.interface_implementations
+                    .entry(interface)
+                    .or_insert_with(Vec::new);
+                if !interface_impls.contains(&child_class) {
+                    interface_impls.push(child_class.clone());
+                }
+            }
+
+            // 传播方法（为子类创建方法的别名）
+            for ancestor_method_name in ancestor_methods {
+                if let Some(ancestor_method) = self.methods.get(&ancestor_method_name).cloned() {
+                    // 创建子类的方法名
+                    // 从 AncestorClass::methodName(params) 转换为 ChildClass::methodName(params)
+                    if let Some(pos) = ancestor_method_name.find("::") {
+                        let method_signature = &ancestor_method_name[pos..];
+                        let child_method_name = format!("{}{}", child_class, method_signature);
+
+                        // 只有当子类没有重写这个方法时才添加
+                        if !self.methods.contains_key(&child_method_name) {
+                            // 创建一个新的方法信息，指向祖先的方法
+                            let mut child_method = ancestor_method.clone();
+                            child_method.full_qualified_name = child_method_name.clone();
+
+                            // 索引这个方法
+                            let _ = self.index_method(&child_method);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 递归收集类的所有祖先方法
+    fn collect_all_ancestor_methods(&self, class_name: &str, result: &mut Vec<String>) {
+        // 递归处理父类
+        if let Some(parent_class) = self.class_inheritance.get(class_name) {
+            // 添加父类的方法
+            let parent_methods: Vec<String> = self.methods
+                .keys()
+                .filter(|method_name| {
+                    // 方法名格式：ClassName::methodName(params)
+                    method_name.starts_with(&format!("{}::", parent_class))
+                })
+                .cloned()
+                .collect();
+
+            for method in parent_methods {
+                if !result.contains(&method) {
+                    result.push(method);
+                }
+            }
+
+            // 递归处理祖先
+            self.collect_all_ancestor_methods(parent_class, result);
+        }
+    }
+
+    /// 递归收集类的所有接口（包括继承的接口）
+    fn collect_all_interfaces(&self, class_name: &str, result: &mut Vec<String>) {
+        // 添加当前类的接口
+        if let Some(interfaces) = self.class_interfaces.get(class_name) {
+            for interface in interfaces {
+                if !result.contains(interface) {
+                    result.push(interface.clone());
+                }
+            }
+        }
+
+        // 递归处理父类
+        if let Some(parent_class) = self.class_inheritance.get(class_name) {
+            self.collect_all_interfaces(parent_class, result);
+        }
+    }
+
+    /// 查找类的父类
+    pub fn find_parent_class(&self, class_name: &str) -> Option<&str> {
+        self.class_inheritance.get(class_name).map(|s| s.as_str())
+    }
+
+    /// 查找类的所有子类
+    pub fn find_child_classes(&self, class_name: &str) -> Vec<&str> {
+        self.parent_children
+            .get(class_name)
+            .map(|children| children.iter().map(|s| s.as_str()).collect())
+            .unwrap_or_default()
+    }
+
     
     /// 解析方法调用目标，如果是接口且只有一个实现类，则返回实现类的方法
     /// 
@@ -1288,6 +1442,32 @@ impl CodeIndex {
     pub fn set_class_interfaces(&mut self, class_interfaces: FxHashMap<String, Vec<String>>) {
         self.class_interfaces = class_interfaces;
     }
+    /// 获取所有继承关系的迭代器
+    pub fn class_inheritance(&self) -> impl Iterator<Item = (&String, &String)> {
+        self.class_inheritance.iter()
+    }
+
+    /// 获取所有父子关系的迭代器
+    pub fn parent_children(&self) -> impl Iterator<Item = (&String, &Vec<String>)> {
+        self.parent_children.iter()
+    }
+
+    /// 内部方法：直接设置继承关系映射
+    ///
+    /// 注意：此方法仅用于索引反序列化，不应在其他地方使用
+    #[doc(hidden)]
+    pub fn set_class_inheritance(&mut self, class_inheritance: FxHashMap<String, String>) {
+        self.class_inheritance = class_inheritance;
+    }
+
+    /// 内部方法：直接设置父子关系映射
+    ///
+    /// 注意：此方法仅用于索引反序列化，不应在其他地方使用
+    #[doc(hidden)]
+    pub fn set_parent_children(&mut self, parent_children: FxHashMap<String, Vec<String>>) {
+        self.parent_children = parent_children;
+    }
+
     
     /// 测试辅助方法：索引解析后的文件
     /// 

@@ -210,6 +210,12 @@ pub struct SerializableIndex {
     
     /// 实现类到接口的映射
     pub class_interfaces: HashMap<String, Vec<String>>,
+    
+    /// 子类到父类的映射
+    pub class_inheritance: HashMap<String, String>,
+    
+    /// 父类到子类的映射
+    pub parent_children: HashMap<String, Vec<String>>,
 }
 
 /// 索引存储管理器
@@ -611,6 +617,18 @@ impl IndexStorage {
             class_interfaces.insert(class.clone(), interfaces.clone());
         }
         
+        // 收集继承关系映射
+        let mut class_inheritance = HashMap::new();
+        for (child, parent) in code_index.class_inheritance() {
+            class_inheritance.insert(child.clone(), parent.clone());
+        }
+        
+        // 收集父子关系映射
+        let mut parent_children = HashMap::new();
+        for (parent, children) in code_index.parent_children() {
+            parent_children.insert(parent.clone(), children.clone());
+        }
+        
         Ok(SerializableIndex {
             methods,
             method_calls,
@@ -626,6 +644,8 @@ impl IndexStorage {
             config_associations,
             interface_implementations,
             class_interfaces,
+            class_inheritance,
+            parent_children,
         })
     }
     
@@ -652,6 +672,18 @@ impl IndexStorage {
             .into_iter()
             .collect();
         code_index.set_class_interfaces(class_interfaces);
+        
+        // 恢复继承关系映射
+        let class_inheritance: FxHashMap<String, String> = data.class_inheritance
+            .into_iter()
+            .collect();
+        code_index.set_class_inheritance(class_inheritance);
+        
+        // 恢复父子关系映射
+        let parent_children: FxHashMap<String, Vec<String>> = data.parent_children
+            .into_iter()
+            .collect();
+        code_index.set_parent_children(parent_children);
         
         Ok(code_index)
     }

@@ -2258,8 +2258,13 @@ impl JavaParser {
             // 字段访问：obj.field
             "field_access" => {
                 // 尝试推断字段访问的类型
-                // 这里简化处理，返回 Object
-                Some("Object".to_string())
+                if let Some(field_access_text) = source.get(arg_node.byte_range()) {
+                    // 使用 infer_field_access_type 推断类型
+                    self.infer_field_access_type(field_access_text, import_map, package_name)
+                        .or(Some("Object".to_string()))
+                } else {
+                    Some("Object".to_string())
+                }
             }
             
             // 方法调用：obj.method() 或 method()

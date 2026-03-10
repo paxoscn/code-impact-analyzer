@@ -685,6 +685,10 @@ impl IndexStorage {
             .collect();
         code_index.set_parent_children(parent_children);
         
+        // 重新执行传播以恢复继承成员和多态调用
+        code_index.propagate_inherited_members();
+        code_index.propagate_polymorphic_calls();
+        
         Ok(code_index)
     }
 }

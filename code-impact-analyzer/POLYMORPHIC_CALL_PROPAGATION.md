@@ -352,3 +352,55 @@ impl CodeIndex {
 ## 总结
 
 多态调用传播功能通过自动识别和添加多态调用关系，显著提升了影响分析的准确性和完整性。它与继承成员传播和接口解析功能相结合，为 Java 代码提供了全面的多态性支持。
+
+
+## 序列化和持久化
+
+### 问题
+
+多态调用是在索引构建完成后通过 `propagate_polymorphic_calls()` 动态生成的，不存储在方法的 `calls` 字段中。这意味着如果直接序列化和反序列化，多态调用关系会丢失。
+
+### 解决方案
+
+在反序列化索引后，自动重新执行传播算法：
+
+```rust
+fn deserialize_index(&self, data: SerializableIndex) -> Result<CodeIndex, IndexError> {
+    let mut code_index = CodeIndex::new();
+    
+    // 重建基础索引
+    for (_, method) in data.methods {
+        code_index.test_index_method(&method)?;
+    }
+    
+    // 恢复继承关系
+    code_index.set_class_inheritance(data.class_inheritance);
+    code_index.set_parent_children(data.parent_children);
+    
+    // 重新执行传播以恢复派生的调用关系
+    code_index.propagate_inherited_members();
+    code_index.propagate_polymorphic_calls();
+    
+    Ok(code_index)
+}
+```
+
+### 优势
+
+1. **减少存储空间**：只存储原始数据，不存储派生数据
+2. **保证一致性**：传播逻辑集中在一处，易于维护
+3. **支持算法升级**：修改传播算法后，旧索引文件仍然可用
+4. **自动修复**：即使索引文件损坏，传播关系也能自动重建
+
+### 性能考虑
+
+- 反序列化时需要额外的传播时间
+- 对于大型项目，传播时间通常在秒级
+- 相比完整的重新索引，仍然快得多
+
+### 测试覆盖
+
+`tests/polymorphic_serialization_test.rs` 包含完整的序列化测试：
+- 验证多态调用在序列化后保持
+- 验证继承成员在序列化后保持
+- 验证正向和反向调用关系都正确恢复

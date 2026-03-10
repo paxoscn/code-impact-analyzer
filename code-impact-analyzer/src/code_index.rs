@@ -1376,7 +1376,6 @@ impl CodeIndex {
                 .entry(caller_method.clone())
                 .or_insert_with(Vec::new)
                 .push(polymorphic_callee.clone());
-            println!("polymorphic_callee {} {}", caller_method, polymorphic_callee);
 
             // 添加到反向调用映射
             self.reverse_calls
@@ -1433,9 +1432,6 @@ impl CodeIndex {
 
                     // 检查这个多态变体是否存在
                     if self.methods.contains_key(&new_signature) {
-                        if method_name.contains("setRequiredCoupon") {
-                            println!("new_signature111 {}", new_signature);
-                        }
                         return Some(new_signature);
                     }
                 }

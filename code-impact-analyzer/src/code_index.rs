@@ -242,6 +242,10 @@ impl CodeIndex {
         log::info!("传播继承的成员...");
         self.propagate_inherited_members();
         
+        // ===== 传播接口的HTTP注解 =====
+        log::info!("传播接口的HTTP注解...");
+        self.propagate_interface_http_annotations();
+        
         // ===== 传播多态调用 =====
         log::info!("传播多态调用...");
         self.propagate_polymorphic_calls();
@@ -509,6 +513,10 @@ impl CodeIndex {
         // ===== 传播继承的成员 =====
         log::info!("传播继承的成员...");
         self.propagate_inherited_members();
+        
+        // ===== 传播接口的HTTP注解 =====
+        log::info!("传播接口的HTTP注解...");
+        self.propagate_interface_http_annotations();
         
         // ===== 传播多态调用 =====
         log::info!("传播多态调用...");
@@ -1351,6 +1359,63 @@ impl CodeIndex {
             }
         }
     }
+    /// 传播接口的HTTP注解到实现类
+    ///
+    /// 当类实现了接口，且接口方法有HTTP注解时，将注解传播到实现类的同名方法
+    pub fn propagate_interface_http_annotations(&mut self) {
+        let mut updates = Vec::new();
+
+        // 遍历所有实现了接口的类
+        for (class_name, interfaces) in &self.class_interfaces {
+            // 遍历该类的所有接口
+            for interface_name in interfaces {
+                // 查找接口的所有方法
+                let interface_methods: Vec<String> = self.methods
+                    .keys()
+                    .filter(|method_name| method_name.starts_with(&format!("{}::", interface_name)))
+                    .cloned()
+                    .collect();
+
+                // 遍历接口的每个方法
+                for interface_method_name in interface_methods {
+                    if let Some(interface_method) = self.methods.get(&interface_method_name) {
+                        // 如果接口方法有HTTP注解
+                        if let Some(http_annotation) = &interface_method.http_annotations {
+                            // 构建实现类的对应方法名
+                            // 从 InterfaceName::methodName(params) 转换为 ClassName::methodName(params)
+                            if let Some(pos) = interface_method_name.find("::") {
+                                let method_signature = &interface_method_name[pos..];
+                                let impl_method_name = format!("{}{}", class_name, method_signature);
+
+                                // 检查实现类是否有这个方法
+                                if let Some(impl_method) = self.methods.get(&impl_method_name) {
+                                    // 如果实现类的方法没有HTTP注解，则从接口继承
+                                    if impl_method.http_annotations.is_none() {
+                                        updates.push((impl_method_name.clone(), http_annotation.clone()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 应用更新
+        for (method_name, http_annotation) in updates {
+            if let Some(method) = self.methods.get_mut(&method_name) {
+                method.http_annotations = Some(http_annotation.clone());
+                
+                // 同时更新HTTP提供者索引
+                let endpoint = crate::types::HttpEndpoint {
+                    method: http_annotation.method.clone(),
+                    path_pattern: http_annotation.path.clone(),
+                };
+                self.http_providers.insert(endpoint, method_name.clone());
+            }
+        }
+    }
+
     /// 传播多态调用
     ///
     /// 当类 X 调用了 foo(A)，且 A 继承自 B 时，为类 X 增加一个对 foo(B) 的调用

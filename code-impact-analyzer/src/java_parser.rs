@@ -1550,6 +1550,32 @@ impl JavaParser {
         } else if node.kind() == "lambda_expression" {
             // 提取 lambda 表达式的参数类型
             self.extract_lambda_parameter_types(source, node, field_types);
+        } else if node.kind() == "enhanced_for_statement" {
+            // 提取增强for循环的变量类型
+            // for (Type var : collection) { ... }
+            let mut cursor = node.walk();
+            let children: Vec<_> = node.children(&mut cursor).collect();
+            
+            // 查找类型和变量名
+            let mut var_type: Option<String> = None;
+            let mut var_name: Option<String> = None;
+            
+            for child in children {
+                if child.kind() == "type_identifier" || child.kind() == "generic_type" {
+                    if let Ok(type_text) = child.utf8_text(source.as_bytes()) {
+                        var_type = Some(type_text.to_string());
+                    }
+                } else if child.kind() == "identifier" && var_type.is_some() && var_name.is_none() {
+                    // 第一个identifier是变量名（在类型之后）
+                    if let Ok(name_text) = child.utf8_text(source.as_bytes()) {
+                        var_name = Some(name_text.to_string());
+                    }
+                }
+            }
+            
+            if let (Some(var_type), Some(var_name)) = (var_type, var_name) {
+                field_types.insert(var_name, var_type);
+            }
         }
         
         let mut cursor = node.walk();

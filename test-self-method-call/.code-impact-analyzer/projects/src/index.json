@@ -1,0 +1,147 @@
+{
+  "methods": {
+    "com.example.Foo::anotherMethod()": {
+      "name": "anotherMethod",
+      "full_qualified_name": "com.example.Foo::anotherMethod()",
+      "file_path": "../test-self-method-call/src/main/java/com/example/Foo.java",
+      "line_range": [
+        34,
+        38
+      ],
+      "calls": [
+        {
+          "target": "com.example.Foo::bar()",
+          "line": 35
+        },
+        {
+          "target": "com.example.Foo::bar()",
+          "line": 36
+        },
+        {
+          "target": "staticBar()",
+          "line": 37
+        }
+      ],
+      "http_annotations": null,
+      "kafka_operations": [],
+      "db_operations": [],
+      "redis_operations": [],
+      "return_type": "void"
+    },
+    "com.example.Foo::bar()": {
+      "name": "bar",
+      "full_qualified_name": "com.example.Foo::bar()",
+      "file_path": "../test-self-method-call/src/main/java/com/example/Foo.java",
+      "line_range": [
+        9,
+        11
+      ],
+      "calls": [
+        {
+          "target": "com.example.Foo::println(String)",
+          "line": 10
+        }
+      ],
+      "http_annotations": null,
+      "kafka_operations": [],
+      "db_operations": [],
+      "redis_operations": [],
+      "return_type": "void"
+    },
+    "com.example.Foo::testMethodCalls()": {
+      "name": "testMethodCalls",
+      "full_qualified_name": "com.example.Foo::testMethodCalls()",
+      "file_path": "../test-self-method-call/src/main/java/com/example/Foo.java",
+      "line_range": [
+        19,
+        31
+      ],
+      "calls": [
+        {
+          "target": "com.example.Foo::bar()",
+          "line": 21
+        },
+        {
+          "target": "com.example.Foo::bar()",
+          "line": 24
+        },
+        {
+          "target": "staticBar()",
+          "line": 27
+        },
+        {
+          "target": "com.example.Foo::staticBar()",
+          "line": 30
+        }
+      ],
+      "http_annotations": null,
+      "kafka_operations": [],
+      "db_operations": [],
+      "redis_operations": [],
+      "return_type": "void"
+    },
+    "com.example.Foo::staticBar()": {
+      "name": "staticBar",
+      "full_qualified_name": "com.example.Foo::staticBar()",
+      "file_path": "../test-self-method-call/src/main/java/com/example/Foo.java",
+      "line_range": [
+        14,
+        16
+      ],
+      "calls": [
+        {
+          "target": "com.example.Foo::println(String)",
+          "line": 15
+        }
+      ],
+      "http_annotations": null,
+      "kafka_operations": [],
+      "db_operations": [],
+      "redis_operations": [],
+      "return_type": "void"
+    }
+  },
+  "method_calls": {
+    "com.example.Foo::staticBar()": [
+      "com.example.Foo::println(String)"
+    ],
+    "com.example.Foo::testMethodCalls()": [
+      "com.example.Foo::bar()",
+      "com.example.Foo::bar()",
+      "staticBar()",
+      "com.example.Foo::staticBar()"
+    ],
+    "com.example.Foo::anotherMethod()": [
+      "com.example.Foo::bar()",
+      "com.example.Foo::bar()",
+      "staticBar()"
+    ],
+    "com.example.Foo::bar()": [
+      "com.example.Foo::println(String)"
+    ]
+  },
+  "reverse_calls": {
+    "com.example.Foo::bar()": [
+      "com.example.Foo::testMethodCalls()",
+      "com.example.Foo::testMethodCalls()",
+      "com.example.Foo::anotherMethod()",
+      "com.example.Foo::anotherMethod()"
+    ],
+    "com.example.Foo::staticBar()": [
+      "com.example.Foo::testMethodCalls()"
+    ]
+  },
+  "http_providers": {},
+  "http_consumers": {},
+  "kafka_producers": {},
+  "kafka_consumers": {},
+  "db_writers": {},
+  "db_readers": {},
+  "redis_writers": {},
+  "redis_readers": {},
+  "config_associations": {},
+  "interface_implementations": {},
+  "class_interfaces": {},
+  "class_inheritance": {},
+  "parent_children": {}
+}

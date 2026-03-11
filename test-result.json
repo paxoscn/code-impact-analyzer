@@ -1,0 +1,47 @@
+{
+  "edge_count": 2,
+  "edges": [
+    {
+      "direction": "downstream",
+      "from": "method:com.example.Foo::testMethodCalls()",
+      "to": "method:com.example.Foo::bar()",
+      "type": "method_call"
+    },
+    {
+      "direction": "downstream",
+      "from": "method:com.example.Foo::testMethodCalls()",
+      "to": "method:com.example.Foo::staticBar()",
+      "type": "method_call"
+    }
+  ],
+  "node_count": 3,
+  "nodes": [
+    {
+      "id": "method:com.example.Foo::testMethodCalls()",
+      "label": "com.example.Foo::testMethodCalls()",
+      "properties": {},
+      "type": {
+        "kind": "method",
+        "qualified_name": "com.example.Foo::testMethodCalls()"
+      }
+    },
+    {
+      "id": "method:com.example.Foo::bar()",
+      "label": "com.example.Foo::bar()",
+      "properties": {},
+      "type": {
+        "kind": "method",
+        "qualified_name": "com.example.Foo::bar()"
+      }
+    },
+    {
+      "id": "method:com.example.Foo::staticBar()",
+      "label": "com.example.Foo::staticBar()",
+      "properties": {},
+      "type": {
+        "kind": "method",
+        "qualified_name": "com.example.Foo::staticBar()"
+      }
+    }
+  ]
+}

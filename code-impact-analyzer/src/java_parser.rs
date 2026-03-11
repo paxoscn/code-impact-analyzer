@@ -80,6 +80,74 @@ fn capitalize_first_letter(s: &str) -> String {
     }
 }
 
+/// 识别常见的集合工厂方法，返回对应的集合接口类型
+/// 
+/// 支持的工厂方法：
+/// - Guava: Lists.newArrayList() -> List, Sets.newHashSet() -> Set, Maps.newHashMap() -> Map
+/// - Java 9+: List.of() -> List, Set.of() -> Set, Map.of() -> Map
+/// - Arrays: Arrays.asList() -> List
+/// - Collections: Collections.emptyList() -> List, Collections.singletonList() -> List
+/// 
+/// # Arguments
+/// * `class_or_object` - 类名或对象名（如 "Lists", "Collections", "Arrays"）
+/// * `method_name` - 方法名（如 "newArrayList", "of", "asList"）
+/// 
+/// # Returns
+/// 返回对应的集合接口类型，如果不是已知的工厂方法则返回 None
+fn infer_collection_factory_type(class_or_object: &str, method_name: &str) -> Option<String> {
+    match (class_or_object, method_name) {
+        // Guava Lists
+        ("Lists", "newArrayList") | ("Lists", "newLinkedList") | ("Lists", "newCopyOnWriteArrayList") => {
+            Some("List".to_string())
+        }
+        
+        // Guava Sets
+        ("Sets", "newHashSet") | ("Sets", "newLinkedHashSet") | ("Sets", "newTreeSet") | 
+        ("Sets", "newConcurrentHashSet") | ("Sets", "newCopyOnWriteArraySet") => {
+            Some("Set".to_string())
+        }
+        
+        // Guava Maps
+        ("Maps", "newHashMap") | ("Maps", "newLinkedHashMap") | ("Maps", "newTreeMap") | 
+        ("Maps", "newConcurrentMap") | ("Maps", "newIdentityHashMap") => {
+            Some("Map".to_string())
+        }
+        
+        // Java 9+ factory methods
+        ("List", "of") | ("List", "copyOf") => Some("List".to_string()),
+        ("Set", "of") | ("Set", "copyOf") => Some("Set".to_string()),
+        ("Map", "of") | ("Map", "copyOf") | ("Map", "ofEntries") => Some("Map".to_string()),
+        
+        // Arrays utility
+        ("Arrays", "asList") => Some("List".to_string()),
+        
+        // Collections utility
+        ("Collections", "emptyList") | ("Collections", "singletonList") | 
+        ("Collections", "unmodifiableList") | ("Collections", "synchronizedList") => {
+            Some("List".to_string())
+        }
+        ("Collections", "emptySet") | ("Collections", "singleton") | 
+        ("Collections", "unmodifiableSet") | ("Collections", "synchronizedSet") => {
+            Some("Set".to_string())
+        }
+        ("Collections", "emptyMap") | ("Collections", "singletonMap") | 
+        ("Collections", "unmodifiableMap") | ("Collections", "synchronizedMap") => {
+            Some("Map".to_string())
+        }
+        
+        // Apache Commons Collections
+        ("ListUtils", "emptyIfNull") | ("ListUtils", "union") | ("ListUtils", "intersection") => {
+            Some("List".to_string())
+        }
+        ("SetUtils", "emptyIfNull") | ("SetUtils", "union") | ("SetUtils", "intersection") => {
+            Some("Set".to_string())
+        }
+        ("MapUtils", "emptyIfNull") => Some("Map".to_string()),
+        
+        _ => None,
+    }
+}
+
 
 /// FeignClient 注解信息
 #[derive(Debug, Clone)]
@@ -2371,7 +2439,43 @@ impl JavaParser {
             
             // 方法调用：obj.method() 或 method()
             "method_invocation" => {
-                // 尝试推断方法返回类型（使用返回类型映射），并进行自动装箱
+                // 首先尝试识别常见的集合工厂方法
+                let mut cursor = arg_node.walk();
+                let mut identifiers = Vec::new();
+                let mut scoped_identifiers = Vec::new();
+                
+                for child in arg_node.children(&mut cursor) {
+                    if child.kind() == "identifier" {
+                        if let Some(text) = source.get(child.byte_range()) {
+                            identifiers.push(text.to_string());
+                        }
+                    } else if child.kind() == "scoped_identifier" {
+                        if let Some(text) = source.get(child.byte_range()) {
+                            scoped_identifiers.push(text.to_string());
+                        }
+                    }
+                }
+                
+                // 检查是否是集合工厂方法
+                // 格式1: Lists.newArrayList() - scoped_identifier + identifier
+                if !scoped_identifiers.is_empty() && !identifiers.is_empty() {
+                    let class_name = &scoped_identifiers[0];
+                    let method_name = &identifiers[identifiers.len() - 1];
+                    if let Some(collection_type) = infer_collection_factory_type(class_name, method_name) {
+                        return Some(collection_type);
+                    }
+                }
+                
+                // 格式2: obj.method() - 两个 identifier
+                if identifiers.len() >= 2 {
+                    let class_or_object = &identifiers[0];
+                    let method_name = &identifiers[identifiers.len() - 1];
+                    if let Some(collection_type) = infer_collection_factory_type(class_or_object, method_name) {
+                        return Some(collection_type);
+                    }
+                }
+                
+                // 如果不是集合工厂方法，尝试推断方法返回类型（使用返回类型映射），并进行自动装箱
                 self.infer_method_return_type_with_map(source, arg_node, field_types, import_map, method_return_types, package_name)
                     .map(|t| autobox_type(&t))
                     .or(Some("Object".to_string()))

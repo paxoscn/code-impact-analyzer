@@ -1,0 +1,12 @@
+diff --git a/src/main/java/com/example/Foo.java b/src/main/java/com/example/Foo.java
+index 1234567..abcdefg 100644
+--- a/src/main/java/com/example/Foo.java
++++ b/src/main/java/com/example/Foo.java
+@@ -17,6 +17,7 @@ public class Foo {
+     // 测试方法：包含三种调用方式
+     public void testMethodCalls() {
+         // 场景1: 直接调用实例方法
++        // 添加注释来触发变更
+         bar();
+         
+         // 场景2: 使用this显式调用实例方法
